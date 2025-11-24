@@ -1,0 +1,14 @@
+{
+    "max_follow_per_day": 50,
+    "max_like_per_day": 100,
+    "max_comment_per_day": 30,
+    "max_dm_per_day": 20,
+    "min_delay_between_actions": 3,
+    "max_delay_between_actions": 15,
+    "enable_random_breaks": true,
+    "break_every_n_actions": 20,
+    "break_duration": 300,
+    "use_proxy": false,
+    "proxy_list": [],
+    "shadowban_check_enabled": true
+}
