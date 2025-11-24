@@ -1,0 +1,5 @@
+# Run dari root directory
+python tests/test_all_modules.py
+
+# Atau dengan unittest
+python -m unittest tests.test_all_modules -v
