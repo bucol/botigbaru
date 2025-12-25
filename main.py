@@ -20,9 +20,9 @@ try:
     from core.account_manager import AccountManager
     from core.login_manager import LoginManager
 except ImportError as e:
-    print(f"❌ Error importing core modules: {e}")
+    print("X Error importing core modules: " + str(e))
     print("
-⚠️  Pastikan folder 'core/' ada dan berisi:")
+W Pastikan folder 'core/' ada dan berisi:")
     print("   - device_identity_generator.py")
     print("   - verification_handler.py")
     print("   - session_manager_v2.py")
@@ -35,57 +35,54 @@ def show_banner():
     """Display banner bot"""
     print("
 " + "=" * 70)
-    print("""
-    ██████╗ ██╗   ██╗ ██████╗ ██████╗ ██╗     
-    ██╔══██╗██║   ██║██╔════╝██╔═══██╗██║     
-    ██████╔╝██║   ██║██║     ██║   ██║██║     
-    ██╔══██╗██║   ██║██║     ██║   ██║██║     
-    ██████╔╝╚██████╔╝╚██████╗╚██████╔╝███████╗
-    ╚═════╝  ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝
-    """)
-    print("    BUCOL BOT INSTAGRAM - v4.0 PRODUCTION")
-    print("    Device Identity Anti-Detection System")
-    print("    For Educational Purpose Only")
+    banner = (
+        "    BUCOL BOT INSTAGRAM v4.0 PRODUCTION
+"
+        "    Device Identity Anti-Detection System
+"
+        "    For Educational Purpose Only"
+    )
+    print(banner)
     print("=" * 70 + "
 ")
 
 
-def test_modules() -> bool:
+def test_modules():
     """Test semua core modules bisa jalan"""
-    print("🔍 Testing core modules...
+    print("Checking core modules...
 ")
 
     try:
         # Device identity
         gen = DeviceIdentityGenerator()
-        print(f"✅ DeviceIdentityGenerator - OK ({len(gen.device_db)} devices loaded)")
+        print("OK DeviceIdentityGenerator - " + str(len(gen.device_db)) + " devices loaded")
 
         # Verification handler
         verif = VerificationHandler()
-        print(f"✅ VerificationHandler - OK (max_retries={verif.max_retries})")
+        print("OK VerificationHandler - max_retries=" + str(verif.max_retries))
 
         # Session manager
         sess = SessionManagerV2()
-        print("✅ SessionManagerV2 - OK")
+        print("OK SessionManagerV2")
 
         # Account manager
         acc = AccountManager()
-        print(f"✅ AccountManager - OK ({len(acc.accounts_db)} accounts)")
+        print("OK AccountManager - " + str(len(acc.accounts_db)) + " accounts")
 
         # Login manager
         login = LoginManager()
-        print("✅ LoginManager - OK")
+        print("OK LoginManager")
 
         print("
 " + "=" * 70)
-        print("✅ ALL MODULES READY!")
+        print("SUCCESS - All modules ready!")
         print("=" * 70 + "
 ")
         return True
 
     except Exception as e:
-        print(f"
-❌ Module test failed: {e}")
+        print("
+ERROR Module test failed: " + str(e))
         import traceback
         traceback.print_exc()
         return False
@@ -95,7 +92,7 @@ def menu_main():
     """Main menu loop"""
     while True:
         print("
-📋 MAIN MENU:")
+MAIN MENU:")
         print("  1. Test Installation")
         print("  2. Quick Account Test (Register & Login Mock)")
         print("  3. List Accounts")
@@ -104,7 +101,7 @@ def menu_main():
         print("  0. Exit")
 
         choice = input("
-✍️  Pilih menu (0-5): ").strip()
+Choose menu (0-5): ").strip()
 
         if choice == "1":
             test_modules()
@@ -118,32 +115,32 @@ def menu_main():
             menu_run_tests()
         elif choice == "0":
             print("
-👋 Bye!
+Bye!
 ")
             break
         else:
-            print("❌ Pilihan tidak valid!")
+            print("Invalid choice!")
 
 
 def menu_account_test():
     """Quick test: register & login (tanpa actual IG API)"""
     print("
 " + "=" * 70)
-    print("🧪 ACCOUNT REGISTRATION TEST")
+    print("ACCOUNT REGISTRATION TEST")
     print("=" * 70 + "
 ")
 
-    username = input("📝 Input username (test_XXX): ").strip()
+    username = input("Input username (test_XXX): ").strip()
     if not username:
-        print("❌ Username tidak boleh kosong")
+        print("ERROR Username cannot be empty")
         return
 
-    password = input("🔑 Input password: ").strip()
+    password = input("Input password: ").strip()
     if not password:
-        print("❌ Password tidak boleh kosong")
+        print("ERROR Password cannot be empty")
         return
 
-    email = input("📧 Input email (opsional): ").strip() or None
+    email = input("Input email (optional): ").strip() or None
 
     try:
         mgr = AccountManager()
@@ -151,41 +148,41 @@ def menu_account_test():
 
         # Register
         print("
-📌 Registering...")
+Registering...")
         ok, msg, data = mgr.register_account(
             username, login_mgr._hash_password(password), email=email
         )
 
         if ok:
-            print(f"✅ {msg}")
+            print("SUCCESS " + msg)
             device = data.get("device_identity", {})
-            print(f"
-   Device Model: {device.get('model')}")
-            print(f"   Device ID: {device.get('device_id')[:8]}...")
-            print(f"   Android Version: {device.get('android_version')}")
-
-            # Mock login (tanpa actual client.login)
             print("
-📌 Mock Login...")
+   Device Model: " + device.get('model', 'N/A'))
+            print("   Device ID: " + device.get('device_id', 'N/A')[:8] + "...")
+            print("   Android Version: " + str(device.get('android_version', 'N/A')))
+
+            # Mock login
+            print("
+Mock Login...")
             ok_login, msg_login, data_login = mgr.login_account(
                 username, login_mgr._hash_password(password)
             )
             if ok_login:
-                print(f"✅ {msg_login}")
+                print("SUCCESS " + msg_login)
             else:
-                print(f"❌ {msg_login}")
+                print("ERROR " + msg_login)
         else:
-            print(f"❌ {msg}")
+            print("ERROR " + msg)
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print("ERROR " + str(e))
 
 
 def menu_list_accounts():
     """List all registered accounts"""
     print("
 " + "=" * 70)
-    print("📋 REGISTERED ACCOUNTS")
+    print("REGISTERED ACCOUNTS")
     print("=" * 70 + "
 ")
 
@@ -196,28 +193,28 @@ def menu_list_accounts():
         accounts = result.get("accounts", [])
 
         if total == 0:
-            print("❌ No accounts registered yet.")
+            print("No accounts registered yet.")
         else:
-            print(f"Total: {total} account(s)
+            print("Total: " + str(total) + " account(s)
 ")
             for i, acc in enumerate(accounts, 1):
                 info = mgr.get_account_info(acc)
                 status = info.get("status", "unknown")
                 device = info.get("device_identity_summary", {})
                 device_model = device.get("model", "unknown") if device else "unknown"
-                print(f"  {i}. @{acc}")
-                print(f"     Status: {status}")
-                print(f"     Device: {device_model}")
+                print("  " + str(i) + ". @" + acc)
+                print("     Status: " + status)
+                print("     Device: " + device_model)
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print("ERROR " + str(e))
 
 
 def menu_statistics():
     """Show global statistics"""
     print("
 " + "=" * 70)
-    print("📊 STATISTICS")
+    print("STATISTICS")
     print("=" * 70 + "
 ")
 
@@ -225,26 +222,27 @@ def menu_statistics():
         mgr = AccountManager()
         stats = mgr.get_statistics()
 
-        print(f"Total Accounts: {stats.get('total_accounts', 0)}")
-        print(f"Active Accounts: {stats.get('active_accounts', 0)}")
-        print(f"Verified Accounts: {stats.get('verified_accounts', 0)}")
-        print(f"Blacklisted Accounts: {stats.get('blacklisted_accounts', 0)}")
+        print("Total Accounts: " + str(stats.get('total_accounts', 0)))
+        print("Active Accounts: " + str(stats.get('active_accounts', 0)))
+        print("Verified Accounts: " + str(stats.get('verified_accounts', 0)))
+        print("Blacklisted Accounts: " + str(stats.get('blacklisted_accounts', 0)))
 
         login_mgr = LoginManager()
         login_stats = login_mgr.get_login_statistics()
-        print(f"
-Active Sessions: {login_stats.get('total_active_sessions', 0)}")
-        print(f"Logged In: {', '.join(login_stats.get('logged_in_accounts', [])) or 'None'}")
+        print("
+Active Sessions: " + str(login_stats.get('total_active_sessions', 0)))
+        logged = ', '.join(login_stats.get('logged_in_accounts', [])) or 'None'
+        print("Logged In: " + logged)
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print("ERROR " + str(e))
 
 
 def menu_run_tests():
     """Run unit tests"""
     print("
 " + "=" * 70)
-    print("🧪 RUNNING TEST SUITE")
+    print("RUNNING TEST SUITE")
     print("=" * 70 + "
 ")
 
@@ -255,14 +253,14 @@ def menu_run_tests():
         success = run_tests()
         if success:
             print("
-✅ All tests passed!")
+SUCCESS All tests passed!")
         else:
             print("
-❌ Some tests failed.")
+ERROR Some tests failed.")
     except ImportError as e:
-        print(f"❌ Cannot import test suite: {e}")
+        print("ERROR Cannot import test suite: " + str(e))
     except Exception as e:
-        print(f"❌ Error running tests: {e}")
+        print("ERROR Running tests: " + str(e))
 
 
 def main():
@@ -272,7 +270,7 @@ def main():
 
         # Initial test
         if not test_modules():
-            print("❌ Core modules initialization failed.")
+            print("ERROR Core modules initialization failed.")
             sys.exit(1)
 
         # Show menu
@@ -281,11 +279,11 @@ def main():
     except KeyboardInterrupt:
         print("
 
-⚠️  Interrupted by user")
+Interrupted by user")
         sys.exit(0)
     except Exception as e:
-        print(f"
-❌ Unexpected error: {e}")
+        print("
+ERROR Unexpected error: " + str(e))
         import traceback
         traceback.print_exc()
         sys.exit(1)
