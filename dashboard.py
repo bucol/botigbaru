@@ -37,8 +37,8 @@ except ImportError as e:
     sys.exit()
 
 # ================= KONFIGURASI =================
-TELEGRAM_TOKEN = 'MASUKKAN_TOKEN_BOT_LU_DISINI'
-TELEGRAM_CHAT_ID = 'MASUKKAN_ID_TELEGRAM_LU_DISINI'
+TELEGRAM_TOKEN = '8013913254:AAEgPHrPD2_qzr2K0mtphdQlG5C-rZfth28'
+TELEGRAM_CHAT_ID = '551845725'
 
 # Inisialisasi
 console = Console()
