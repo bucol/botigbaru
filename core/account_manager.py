@@ -1,21 +1,53 @@
 import json
 import os
 import datetime
+from cryptography.fernet import Fernet
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class AccountManager:
     def __init__(self):
-        # Kita simpan di folder data/ agar rapi
         self.data_dir = "data"
         self.db_file = os.path.join(self.data_dir, "accounts.json")
         self._setup()
+        self._init_encryption()
+
+    def _init_encryption(self):
+        """Initialize encryption key"""
+        key = os.getenv('ENCRYPTION_KEY')
+        if key:
+            # Pastikan key 32 bytes, encode ke base64
+            key_bytes = key.encode()[:32].ljust(32, b'0')
+            import base64
+            self.cipher = Fernet(base64.urlsafe_b64encode(key_bytes))
+        else:
+            self.cipher = None
+            print("⚠️ ENCRYPTION_KEY tidak diset. Password akan disimpan terenkripsi dengan key default.")
+            # Generate default key (untuk development only)
+            default_key = Fernet.generate_key()
+            self.cipher = Fernet(default_key)
+
+    def _encrypt(self, text: str) -> str:
+        """Encrypt text"""
+        if self.cipher:
+            return self.cipher.encrypt(text.encode()).decode()
+        return text
+
+    def _decrypt(self, encrypted_text: str) -> str:
+        """Decrypt text"""
+        if self.cipher:
+            try:
+                return self.cipher.decrypt(encrypted_text.encode()).decode()
+            except:
+                return encrypted_text  # Fallback jika gagal decrypt
+        return encrypted_text
 
     def _setup(self):
         """Memastikan folder dan file database tersedia"""
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir)
-        
         if not os.path.exists(self.db_file):
-            # Inisialisasi list kosong []
             with open(self.db_file, 'w') as f:
                 json.dump([], f)
 
@@ -31,46 +63,39 @@ class AccountManager:
             return []
 
     def add_account(self, username, password):
-        """Menambah atau mengupdate akun"""
+        """Menambah atau mengupdate akun dengan password terenkripsi"""
         accounts = self.get_all_accounts()
-        
-        # Cek apakah username sudah ada (Update password kalau ada)
+        encrypted_password = self._encrypt(password)
+
         found = False
         for acc in accounts:
             if acc['username'] == username:
-                acc['password'] = password
+                acc['password'] = encrypted_password
                 acc['updated_at'] = str(datetime.datetime.now())
                 found = True
                 break
-        
-        # Kalau belum ada, tambahkan baru
+
         if not found:
             accounts.append({
                 "username": username,
-                "password": password,
+                "password": encrypted_password,
                 "added_at": str(datetime.datetime.now())
             })
-            
-        self._save_db(accounts)
-        print(f"✅ Akun {username} berhasil disimpan.")
 
-    def delete_account(self, username):
-        """Menghapus akun berdasarkan username"""
+        self._save_db(accounts)
+
+    def get_password(self, username):
+        """Ambil password yang sudah didekripsi"""
         accounts = self.get_all_accounts()
-        new_accounts = [acc for acc in accounts if acc['username'] != username]
-        
-        if len(accounts) != len(new_accounts):
-            self._save_db(new_accounts)
-            print(f"🗑️ Akun {username} dihapus.")
-            return True
-        return False
+        for acc in accounts:
+            if acc['username'] == username:
+                return self._decrypt(acc['password'])
+        return None
 
     def _save_db(self, accounts):
-        """Menulis kembali ke file JSON"""
         with open(self.db_file, 'w') as f:
-            json.dump(accounts, f, indent=4)
+            json.dump(accounts, f, indent=2)
 
-# Test function kalau file ini dijalankan langsung
-if __name__ == "__main__":
-    am = AccountManager()
-    print("Database Accounts:", am.get_all_accounts())
+    @property
+    def accounts_db(self):
+        return self.get_all_accounts()
