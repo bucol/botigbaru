@@ -1,3 +1,8 @@
 instagrapi==2.1.2
 requests==2.31.0
 colorama==0.4.6
+rich==13.7.0
+questionary==2.0.1
+pyTelegramBotAPI==4.14.0
+cryptography==41.0.7
+python-dotenv==1.0.0
