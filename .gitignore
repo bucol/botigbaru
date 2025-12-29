@@ -1,0 +1,29 @@
+# Environment & Secrets
+.env
+*.env
+
+# Session files
+sessions/
+instagram_settings.json
+instagram_session.json
+
+# Database
+*.db
+data/accounts.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
