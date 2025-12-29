@@ -1,299 +1,182 @@
-#!/usr/bin/env python3
-"""
-Verification Handler - Production Version
-
-Handle semua jenis verifikasi Instagram:
-- SMS code
-- Email code
-- Checkpoint / unusual activity
-- 2FA (authenticator app)
-- Security alert
-
-Fitur:
-- Deteksi tipe verifikasi dari error message
-- Logging semua attempt ke JSONL
-- Retry counting per akun
-- Blacklist setelah max_retries
-- Cooldown‑aware (bisa ditambah layer waktu di atasnya)
-"""
-
 import json
-from enum import Enum
-from pathlib import Path
+import os
+import time
+import random
 from datetime import datetime
-from typing import Dict, Any, Tuple, Optional
-
-
-class VerificationType(Enum):
-    SMS = "sms"
-    EMAIL = "email"
-    CHECKPOINT = "checkpoint"
-    TWO_FA = "2fa"
-    SECURITY_ALERT = "security_alert"
-    UNKNOWN = "unknown"
-
+from instagrapi import Client
+from instagrapi.exceptions import (
+    ChallengeRequired,
+    TwoFactorRequired,
+    LoginRequired,
+    PleaseWaitFewMinutes
+)
 
 class VerificationHandler:
-    """
-    Abstraction untuk semua verification flow.
-    """
-
-    def __init__(
-        self,
-        max_retries: int = 5,
-        cooldown_minutes: int = 30,
-        log_dir: str = "logs/verification_logs",
-    ):
-        self.max_retries = max_retries
-        self.cooldown_minutes = cooldown_minutes
-        self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-
-    # ======================================================================
-    # DETEKSI VERIFICATION TYPE
-    # ======================================================================
-
-    def detect_verification_required(self, error_message: str) -> Tuple[bool, VerificationType]:
-        """
-        Dari error_message (string apa pun), deteksi apakah ini verification,
-        dan kalau iya, tipe verifikasinya apa.
-        """
-        if not error_message:
-            return False, VerificationType.UNKNOWN
-
-        msg = error_message.lower()
-
-        # SMS
-        sms_keywords = ["sms", "phone", "text message", "kode sms", "sent a code to", "via sms"]
-        if any(k in msg for k in sms_keywords):
-            return True, VerificationType.SMS
-
-        # Email
-        email_keywords = ["email", "mail", "sent a code to your email", "kode dikirim ke email"]
-        if any(k in msg for k in email_keywords):
-            return True, VerificationType.EMAIL
-
-        # 2FA
-        twofa_keywords = [
-            "two factor",
-            "2fa",
-            "authentication app",
-            "authenticator",
-            "login code",
-        ]
-        if any(k in msg for k in twofa_keywords):
-            return True, VerificationType.TWO_FA
-
-        # Checkpoint / challenge
-        checkpoint_keywords = [
-            "checkpoint",
-            "unusual activity",
-            "suspicious login",
-            "verify it’s you",
-            "challenge_required",
-        ]
-        if any(k in msg for k in checkpoint_keywords):
-            return True, VerificationType.CHECKPOINT
-
-        # Security alert
-        security_keywords = ["security alert", "suspicious attempt", "new login", "was this you"]
-        if any(k in msg for k in security_keywords):
-            return True, VerificationType.SECURITY_ALERT
-
-        return False, VerificationType.UNKNOWN
-
-    # ======================================================================
-    # LOGGING / STORAGE
-    # ======================================================================
-
-    def _log_file_for_today(self) -> Path:
-        today = datetime.now().strftime("%Y-%m-%d")
-        return self.log_dir / f"{today}.jsonl"
-
-    def log_verification_attempt(
-        self,
-        username: str,
-        verification_type: VerificationType,
-        status: str,
-        code_used: Optional[str] = None,
-        message: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        Log satu verification attempt ke JSONL file.
-        status: "pending" | "success" | "failed"
-        """
+    def __init__(self, client: Client, username: str):
+        self.client = client
+        self.username = username
+        self.session_dir = "sessions"
+        self.log_dir = "logs"
+        self.max_retries = 3
+        self.challenge_methods = ['email', 'sms']
+        
+        os.makedirs(self.session_dir, exist_ok=True)
+        os.makedirs(self.log_dir, exist_ok=True)
+    
+    def handle_challenge(self, challenge_info: dict) -> bool:
+        """Handle Instagram challenge/verification"""
+        try:
+            self.log_event("challenge_detected", {
+                "type": challenge_info.get('step_name', 'unknown'),
+                "message": challenge_info.get('message', '')
+            })
+            
+            step_name = challenge_info.get('step_name', '')
+            
+            if 'verify_email' in step_name or 'email' in step_name.lower():
+                return self._handle_email_verification()
+            elif 'verify_sms' in step_name or 'sms' in step_name.lower():
+                return self._handle_sms_verification()
+            elif 'select_verify_method' in step_name:
+                return self._handle_method_selection(challenge_info)
+            else:
+                self.log_event("unknown_challenge", {"step": step_name})
+                return False
+                
+        except Exception as e:
+            self.log_event("challenge_error", {"error": str(e)})
+            return False
+    
+    def _handle_method_selection(self, challenge_info: dict) -> bool:
+        """Let user select verification method"""
+        print("\n" + "="*50)
+        print("🔐 VERIFIKASI DIPERLUKAN")
+        print("="*50)
+        print("Pilih metode verifikasi:")
+        print("1. Email")
+        print("2. SMS")
+        print("0. Batal")
+        
+        choice = input("\nPilihan [1/2/0]: ").strip()
+        
+        if choice == "1":
+            self.client.challenge_code_handler = self._email_code_handler
+            return self._handle_email_verification()
+        elif choice == "2":
+            self.client.challenge_code_handler = self._sms_code_handler
+            return self._handle_sms_verification()
+        else:
+            return False
+    
+    def _handle_email_verification(self) -> bool:
+        """Handle email verification"""
+        print("\n📧 Kode verifikasi dikirim ke EMAIL")
+        return self._process_verification_code("email")
+    
+    def _handle_sms_verification(self) -> bool:
+        """Handle SMS verification"""
+        print("\n📱 Kode verifikasi dikirim ke SMS")
+        return self._process_verification_code("sms")
+    
+    def _process_verification_code(self, method: str) -> bool:
+        """Process verification code input"""
+        for attempt in range(self.max_retries):
+            print(f"\nPercobaan {attempt + 1}/{self.max_retries}")
+            code = input(f"Masukkan kode verifikasi ({method}): ").strip()
+            
+            if not code:
+                print("❌ Kode tidak boleh kosong!")
+                continue
+            
+            if not code.isdigit() or len(code) != 6:
+                print("❌ Kode harus 6 digit angka!")
+                continue
+            
+            try:
+                result = self.client.challenge_resolve(code)
+                if result:
+                    self.log_event("verification_success", {"method": method})
+                    print("✅ Verifikasi berhasil!")
+                    self._save_session()
+                    return True
+                else:
+                    print("❌ Kode salah, coba lagi...")
+                    
+            except Exception as e:
+                self.log_event("verification_failed", {
+                    "method": method,
+                    "attempt": attempt + 1,
+                    "error": str(e)
+                })
+                print(f"❌ Error: {str(e)}")
+        
+        print("❌ Verifikasi gagal setelah 3 percobaan")
+        return False
+    
+    def _email_code_handler(self, username: str, choice: str) -> str:
+        """Handler for email verification code"""
+        code = input("📧 Masukkan kode dari EMAIL: ").strip()
+        return code
+    
+    def _sms_code_handler(self, username: str, choice: str) -> str:
+        """Handler for SMS verification code"""
+        code = input("📱 Masukkan kode dari SMS: ").strip()
+        return code
+    
+    def handle_two_factor(self) -> bool:
+        """Handle 2FA authentication"""
+        print("\n" + "="*50)
+        print("🔐 TWO-FACTOR AUTHENTICATION")
+        print("="*50)
+        
+        for attempt in range(self.max_retries):
+            code = input("Masukkan kode 2FA: ").strip()
+            
+            if not code:
+                continue
+                
+            try:
+                result = self.client.two_factor_login(code)
+                if result:
+                    self.log_event("2fa_success", {})
+                    print("✅ 2FA berhasil!")
+                    self._save_session()
+                    return True
+            except Exception as e:
+                self.log_event("2fa_failed", {"error": str(e)})
+                print(f"❌ Error: {str(e)}")
+        
+        return False
+    
+    def _save_session(self):
+        """Save session after successful verification"""
+        try:
+            session_file = os.path.join(self.session_dir, f"{self.username}.json")
+            self.client.dump_settings(session_file)
+            self.log_event("session_saved", {"file": session_file})
+        except Exception as e:
+            self.log_event("session_save_error", {"error": str(e)})
+    
+    def log_event(self, event_type: str, data: dict):
+        """Log verification events"""
         log_entry = {
             "timestamp": datetime.now().isoformat(),
-            "username": username,
-            "verification_type": verification_type.value,
-            "status": status,
-            "code_used": bool(code_used),
-            "message": message or "",
+            "username": self.username,
+            "event": event_type,
+            "data": data
         }
-
+        
+        log_file = os.path.join(self.log_dir, f"verification_{datetime.now().strftime('%Y%m%d')}.log")
+        
         try:
-            log_file = self._log_file_for_today()
-            log_file.parent.mkdir(parents=True, exist_ok=True)
             with open(log_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(log_entry, ensure_ascii=False) + "
-")
-        except Exception:
-            # Jangan raise; verification tetap jalan walau logging gagal
-            pass
-
-        return log_entry
-
-    # ======================================================================
-    # RETRY COUNTING & BLACKLIST
-    # ======================================================================
-
-    def _iter_all_logs(self):
-        """Internal: iterate semua log JSONL di folder."""
-        if not self.log_dir.exists():
-            return
-        for file in sorted(self.log_dir.glob("*.jsonl")):
-            try:
-                with open(file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            yield json.loads(line)
-                        except Exception:
-                            continue
-            except Exception:
-                continue
-
-    def get_retry_count(self, username: str) -> int:
-        """
-        Hitung berapa kali verification gagal untuk username ini (from all logs).
-        """
-        count = 0
-        for entry in self._iter_all_logs():
-            if (
-                entry.get("username") == username
-                and entry.get("status") == "failed"
-            ):
-                count += 1
-        return count
-
-    def is_blacklisted(self, username: str) -> bool:
-        """
-        True kalau user sudah melebihi max_retries gagal verification.
-        """
-        return self.get_retry_count(username) >= self.max_retries
-
-    def get_verification_stats(self, username: str) -> Dict[str, Any]:
-        """
-        Return statistik sederhana untuk 1 akun:
-        - total_attempts
-        - failed_attempts
-        - success_attempts
-        - pending_count
-        - last_status
-        """
-        total = failed = success = pending = 0
-        last_status = None
-        last_ts = None
-
-        for entry in self._iter_all_logs():
-            if entry.get("username") != username:
-                continue
-
-            total += 1
-            status = entry.get("status")
-            ts = entry.get("timestamp")
-
-            if status == "failed":
-                failed += 1
-            elif status == "success":
-                success += 1
-            elif status == "pending":
-                pending += 1
-
-            if not last_ts or ts > last_ts:
-                last_ts = ts
-                last_status = status
-
-        return {
-            "total_attempts": total,
-            "failed_attempts": failed,
-            "success_attempts": success,
-            "pending_count": pending,
-            "last_status": last_status,
-        }
-
-    # ======================================================================
-    # VERIFICATION FLOW (ABSTRAKSI SEDERHANA)
-    # ======================================================================
-
-    def handle_verification_flow(
-        self,
-        username: str,
-        verification_type: VerificationType,
-        auto_code: Optional[str] = None,
-        manual_code: Optional[str] = None,
-    ) -> Tuple[bool, str]:
-        """
-        Abstraksi high‑level:
-        - Cek blacklist
-        - Ambil kode (auto atau manual)
-        - Log attempt sebagai success/failed
-
-        Di sini TIDAK memanggil API Instagram langsung;
-        integration sebenernya dilakukan di AccountManager/LoginManager.
-        """
-
-        # Cek blacklist
-        if self.is_blacklisted(username):
-            msg = (
-                f"Akun {username} sudah mencapai batas maksimal percobaan "
-                f"verifikasi ({self.max_retries}). Tunggu cooldown dulu."
-            )
-            self.log_verification_attempt(
-                username, verification_type, "failed", message="blacklisted"
-            )
-            return False, msg
-
-        # Ambil code
-        code = auto_code or manual_code
-        if not code:
-            # Belum ada code, berarti hanya menandai pending
-            self.log_verification_attempt(
-                username, verification_type, "pending", message="waiting_for_code"
-            )
-            return False, "Verification code belum tersedia (pending)."
-
-        # Di sini, secara real API harus dicall (misal: client.challenge_send(code))
-        # Karena modul ini generic, kita "simulate" result, dan integration layer
-        # yang akan decide success atau gagal sebenarnya.
-
-        # Untuk sekarang: anggap code 6 digit numeric → success, lainnya → failed
-        success = code.isdigit() and len(code) in (6, 8)
-
-        status = "success" if success else "failed"
-        self.log_verification_attempt(
-            username,
-            verification_type,
-            status,
-            code_used=code,
-            message="auto_rule_check",
-        )
-
-        if success:
-            return True, "Verification berhasil dengan code yang diberikan."
-        else:
-            # Bisa menyebabkan blacklist kalau gagal berkali‑kali
-            if self.is_blacklisted(username):
-                return (
-                    False,
-                    "Code salah dan akun sekarang masuk blacklist sementara "
-                    f"(>{self.max_retries} gagal).",
-                )
-            return False, "Verification gagal, code tidak valid."
-
-
-def create_verification_handler() -> VerificationHandler:
-    """Factory kecil agar pemanggilan dari luar konsisten."""
-    return VerificationHandler()
+                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+        except Exception as e:
+            print(f"Log error: {e}")
+    
+    def wait_with_message(self, seconds: int, message: str = "Menunggu"):
+        """Wait with countdown display"""
+        for i in range(seconds, 0, -1):
+            print(f"\r{message}: {i} detik...", end="", flush=True)
+            time.sleep(1)
+        print()
