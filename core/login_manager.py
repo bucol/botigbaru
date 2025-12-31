@@ -6,6 +6,7 @@ import requests  # Tambahan untuk check proxy
 import csv  # Tambahan untuk export CSV
 from datetime import datetime
 from typing import Tuple, Optional
+import shutil  # Buat backup file
 
 from instagrapi import Client
 from instagrapi.exceptions import (
@@ -49,7 +50,7 @@ class LoginManager:
         return None
 
     def login_account(self, username: str, password: str) -> Tuple[Optional[Client], bool]:
-        """Login dengan device faker, proxy rotator, dan challenge handler"""
+        """Login dengan device faker, proxy rotator, dan challenge handler, plus auto backup"""
         client = Client()
         client.delay_range = [1, 3]  # Anti-ban delay
 
@@ -76,6 +77,7 @@ class LoginManager:
         try:
             client.login(username, password)
             self.session_mgr.save_session(client)
+            self._backup_session(username)  # Auto backup setelah sukses
             self._log_event(username, "Login successful")
             return client, True
 
@@ -116,6 +118,7 @@ class LoginManager:
 
             client.login(username, password)
             self.session_mgr.save_session(client)
+            self._backup_session(username)  # Auto backup
             self._log_event(username, "Challenge resolved")
             return client, True
 
@@ -154,7 +157,7 @@ class LoginManager:
                 json.dump([log_entry], f, indent=2)
 
     def export_logs_to_csv(self, csv_file="login_logs.csv"):
-        """Fitur baru: Export logs JSON ke CSV"""
+        """Export logs JSON ke CSV"""
         log_file = "login_logs.json"
         if not os.path.exists(log_file):
             print("No logs to export!")
@@ -167,3 +170,23 @@ class LoginManager:
             for log in logs:
                 writer.writerow([log['timestamp'], log['username'], log['event']])
         print(f"Logs exported to {csv_file}")
+
+    def _backup_session(self, username: str):
+        """Fitur baru: Backup session otomatis ke folder backups/ dengan timestamp"""
+        session_file = f"sessions/{username}.json"  # Asumsi dari session_manager
+        if os.path.exists(session_file):
+            backup_dir = "backups"
+            if not os.path.exists(backup_dir):
+                os.makedirs(backup_dir)
+            backup_file = os.path.join(backup_dir, f"{username}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+            shutil.copy(session_file, backup_file)
+            print(f"Session backed up to {backup_file}")
+
+    def restore_session(self, username: str, backup_file: str):
+        """Fitur baru: Restore session dari backup"""
+        session_file = f"sessions/{username}.json"
+        if os.path.exists(backup_file):
+            shutil.copy(backup_file, session_file)
+            print(f"Session restored from {backup_file}")
+        else:
+            print("Backup file not found!")
