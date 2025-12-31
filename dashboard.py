@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 # Load environment variables dari file .env
 load_dotenv()
-q
+
 # Import Library UI Keren
 from rich.console import Console
 from rich.panel import Panel
