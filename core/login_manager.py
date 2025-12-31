@@ -3,6 +3,7 @@ import os
 import time
 import random
 import requests  # Tambahan untuk check proxy
+import csv  # Tambahan untuk export CSV
 from datetime import datetime
 from typing import Tuple, Optional
 
@@ -151,3 +152,18 @@ class LoginManager:
         else:
             with open(log_file, 'w') as f:
                 json.dump([log_entry], f, indent=2)
+
+    def export_logs_to_csv(self, csv_file="login_logs.csv"):
+        """Fitur baru: Export logs JSON ke CSV"""
+        log_file = "login_logs.json"
+        if not os.path.exists(log_file):
+            print("No logs to export!")
+            return
+        with open(log_file, 'r') as f:
+            logs = json.load(f)
+        with open(csv_file, 'w', newline='') as cf:
+            writer = csv.writer(cf)
+            writer.writerow(['timestamp', 'username', 'event'])  # Header
+            for log in logs:
+                writer.writerow([log['timestamp'], log['username'], log['event']])
+        print(f"Logs exported to {csv_file}")
