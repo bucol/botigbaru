@@ -77,7 +77,7 @@ class AccountBot:
         while True:
             username = input("Username (3-20 karakter, huruf, angka, underscore): ").strip()
             if not self.validate_username(username):
-                print("❌ Username tidak valid! Harus 3-20 karakter (huruf, angka, underscore)")
+                print("Username tidak valid! Harus 3-20 karakter (huruf, angka, underscore)")
                 continue
             
             # Check if username exists
@@ -86,7 +86,7 @@ class AccountBot:
             cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
             if cursor.fetchone():
                 conn.close()
-                print("❌ Username sudah digunakan!")
+                print("Username sudah digunakan!")
                 continue
             conn.close()
             break
@@ -94,14 +94,14 @@ class AccountBot:
         # Get name
         name = input("Nama lengkap: ").strip()
         while not name:
-            print("❌ Nama tidak boleh kosong!")
+            print("Nama tidak boleh kosong!")
             name = input("Nama lengkap: ").strip()
         
         # Get email
         while True:
             email = input("Email: ").strip()
             if not self.validate_email(email):
-                print("❌ Format email tidak valid!")
+                print("Format email tidak valid!")
                 continue
             
             # Check if email exists
@@ -110,7 +110,7 @@ class AccountBot:
             cursor.execute("SELECT id FROM users WHERE email = ?", (email,))
             if cursor.fetchone():
                 conn.close()
-                print("❌ Email sudah digunakan!")
+                print("Email sudah digunakan!")
                 continue
             conn.close()
             break
@@ -119,12 +119,12 @@ class AccountBot:
         while True:
             password = input("Password (min 6 karakter): ").strip()
             if len(password) < 6:
-                print("❌ Password minimal 6 karakter!")
+                print("Password minimal 6 karakter!")
                 continue
             
             confirm_password = input("Konfirmasi password: ").strip()
             if password != confirm_password:
-                print("❌ Password tidak cocok!")
+                print("Password tidak cocok!")
                 continue
             break
         
@@ -147,7 +147,7 @@ class AccountBot:
         conn.commit()
         conn.close()
         
-        print("\n✅ Registrasi berhasil! Silakan login.")
+        print("\nRegistrasi berhasil! Silakan login.")
     
     def login(self):
         """Login user"""
@@ -177,16 +177,16 @@ class AccountBot:
                 'created_at': user[7],
                 'updated_at': user[8]
             }
-            print(f"\n✅ Login berhasil! Selamat datang, {self.current_user['name']}!")
+            print(f"\nLogin berhasil! Selamat datang, {self.current_user['name']}!")
             return True
         else:
-            print("\n❌ Username atau password salah!")
+            print("\nUsername atau password salah!")
             return False
     
     def show_account_info(self):
         """Display current user's account information"""
         if not self.current_user:
-            print("\n❌ Anda harus login terlebih dahulu!")
+            print("\nAnda harus login terlebih dahulu!")
             return
         
         print("\n" + "="*50)
@@ -205,7 +205,7 @@ class AccountBot:
     def upload_profile_picture(self):
         """Upload profile picture"""
         if not self.current_user:
-            print("\n❌ Anda harus login terlebih dahulu!")
+            print("\nAnda harus login terlebih dahulu!")
             return
         
         print("\n" + "="*50)
@@ -216,14 +216,14 @@ class AccountBot:
         
         # Check if file exists
         if not os.path.exists(file_path):
-            print("❌ File tidak ditemukan!")
+            print("File tidak ditemukan!")
             return
         
         # Check file extension
         valid_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp']
         file_ext = os.path.splitext(file_path)[1].lower()
         if file_ext not in valid_extensions:
-            print(f"❌ Format file tidak didukung! Gunakan: {', '.join(valid_extensions)}")
+            print(f"Format file tidak didukung! Gunakan: {', '.join(valid_extensions)}")
             return
         
         # Create new filename
@@ -252,14 +252,14 @@ class AccountBot:
             self.current_user['profile_picture'] = new_path
             self.current_user['updated_at'] = now
             
-            print(f"\n✅ Foto profil berhasil diupload: {new_path}")
+            print(f"\nFoto profil berhasil diupload: {new_path}")
         except Exception as e:
-            print(f"❌ Error saat upload: {str(e)}")
+            print(f"Error saat upload: {str(e)}")
     
     def change_name(self):
         """Change user's name"""
         if not self.current_user:
-            print("\n❌ Anda harus login terlebih dahulu!")
+            print("\nAnda harus login terlebih dahulu!")
             return
         
         print("\n" + "="*50)
@@ -269,7 +269,7 @@ class AccountBot:
         
         new_name = input("Nama baru: ").strip()
         while not new_name:
-            print("❌ Nama tidak boleh kosong!")
+            print("Nama tidak boleh kosong!")
             new_name = input("Nama baru: ").strip()
         
         # Update database
@@ -290,12 +290,12 @@ class AccountBot:
         self.current_user['name'] = new_name
         self.current_user['updated_at'] = now
         
-        print(f"\n✅ Nama berhasil diubah menjadi: {new_name}")
+        print(f"\nNama berhasil diubah menjadi: {new_name}")
     
     def change_username(self):
         """Change username"""
         if not self.current_user:
-            print("\n❌ Anda harus login terlebih dahulu!")
+            print("\nAnda harus login terlebih dahulu!")
             return
         
         print("\n" + "="*50)
@@ -306,7 +306,7 @@ class AccountBot:
         while True:
             new_username = input("Username baru (3-20 karakter): ").strip()
             if not self.validate_username(new_username):
-                print("❌ Username tidak valid! Harus 3-20 karakter (huruf, angka, underscore)")
+                print("Username tidak valid! Harus 3-20 karakter (huruf, angka, underscore)")
                 continue
             
             # Check if username exists
@@ -316,7 +316,7 @@ class AccountBot:
                           (new_username, self.current_user['id']))
             if cursor.fetchone():
                 conn.close()
-                print("❌ Username sudah digunakan!")
+                print("Username sudah digunakan!")
                 continue
             
             # Update database
@@ -334,13 +334,13 @@ class AccountBot:
             self.current_user['username'] = new_username
             self.current_user['updated_at'] = now
             
-            print(f"\n✅ Username berhasil diubah menjadi: {new_username}")
+            print(f"\nUsername berhasil diubah menjadi: {new_username}")
             break
     
     def change_bio(self):
         """Change user's bio"""
         if not self.current_user:
-            print("\n❌ Anda harus login terlebih dahulu!")
+            print("\nAnda harus login terlebih dahulu!")
             return
         
         print("\n" + "="*50)
@@ -368,12 +368,12 @@ class AccountBot:
         self.current_user['bio'] = new_bio
         self.current_user['updated_at'] = now
         
-        print(f"\n✅ Bio berhasil diubah!")
+        print(f"\nBio berhasil diubah!")
     
     def change_email(self):
         """Change user's email"""
         if not self.current_user:
-            print("\n❌ Anda harus login terlebih dahulu!")
+            print("\nAnda harus login terlebih dahulu!")
             return
         
         print("\n" + "="*50)
@@ -384,7 +384,7 @@ class AccountBot:
         while True:
             new_email = input("Email baru: ").strip()
             if not self.validate_email(new_email):
-                print("❌ Format email tidak valid!")
+                print("Format email tidak valid!")
                 continue
             
             # Check if email exists
@@ -394,14 +394,14 @@ class AccountBot:
                           (new_email, self.current_user['id']))
             if cursor.fetchone():
                 conn.close()
-                print("❌ Email sudah digunakan!")
+                print("Email sudah digunakan!")
                 continue
             
             # Verify current password for security
             password = input("Masukkan password untuk konfirmasi: ").strip()
             if not self.verify_password(password, self.current_user['password']):
                 conn.close()
-                print("❌ Password salah!")
+                print("Password salah!")
                 return
             
             # Update database
@@ -419,7 +419,7 @@ class AccountBot:
             self.current_user['email'] = new_email
             self.current_user['updated_at'] = now
             
-            print(f"\n✅ Email berhasil diubah menjadi: {new_email}")
+            print(f"\nEmail berhasil diubah menjadi: {new_email}")
             break
     
     def show_main_menu(self):
@@ -428,17 +428,16 @@ class AccountBot:
             print("\n" + "="*50)
             print("MENU UTAMA")
             print("="*50)
-            print("1. Lihat Info Akun")
+            print("1. Tampilkan Info Akun")
             print("2. Upload Foto Profil")
             print("3. Ganti Nama")
             print("4. Ganti Username")
             print("5. Ganti Bio")
             print("6. Ganti Email")
             print("7. Logout")
-            print("0. Keluar")
             print("="*50)
             
-            choice = input("Pilih menu (0-7): ").strip()
+            choice = input("Pilih menu (1-7): ").strip()
             
             if choice == '1':
                 self.show_account_info()
@@ -453,60 +452,25 @@ class AccountBot:
             elif choice == '6':
                 self.change_email()
             elif choice == '7':
-                print("\n✅ Logout berhasil!")
                 self.current_user = None
+                print("Logout berhasil!")
                 break
-            elif choice == '0':
-                print("\nTerima kasih! Sampai jumpa!")
-                return False
             else:
-                print("\n❌ Pilihan tidak valid!")
-        
-        return True
-    
-    def run(self):
-        """Main application loop"""
-        print("="*50)
-        print("BOT MANAJEMEN AKUN USER")
-        print("="*50)
-        print("Selamat datang di Bot Manajemen Akun!")
-        
-        while True:
-            if not self.current_user:
-                print("\n" + "="*50)
-                print("MENU LOGIN")
-                print("="*50)
-                print("1. Login")
-                print("2. Registrasi")
-                print("0. Keluar")
-                print("="*50)
-                
-                choice = input("Pilih menu (0-2): ").strip()
-                
-                if choice == '1':
-                    if self.login():
-                        if not self.show_main_menu():
-                            break
-                elif choice == '2':
-                    self.register_user()
-                elif choice == '0':
-                    print("\nTerima kasih! Sampai jumpa!")
-                    break
-                else:
-                    print("\n❌ Pilihan tidak valid!")
-            else:
-                if not self.show_main_menu():
-                    break
-
-def main():
-    """Main entry point"""
-    try:
-        bot = AccountBot()
-        bot.run()
-    except KeyboardInterrupt:
-        print("\n\nProgram dihentikan oleh user. Terima kasih!")
-    except Exception as e:
-        print(f"\n❌ Error: {str(e)}")
+                print("Pilihan tidak valid!")
 
 if __name__ == "__main__":
-    main()
+    bot = AccountBot()
+    while True:
+        print("\n1. Register")
+        print("2. Login")
+        print("3. Keluar")
+        choice = input("Pilih: ").strip()
+        if choice == '1':
+            bot.register_user()
+        elif choice == '2':
+            if bot.login():
+                bot.show_main_menu()
+        elif choice == '3':
+            break
+        else:
+            print("Pilihan tidak valid!")
