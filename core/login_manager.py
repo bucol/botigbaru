@@ -2,141 +2,152 @@ import json
 import os
 import time
 import random
+import requests  # Tambahan untuk check proxy
 from datetime import datetime
+from typing import Tuple, Optional
+
 from instagrapi import Client
 from instagrapi.exceptions import (
-    ChallengeRequired,
-    TwoFactorRequired,
-    LoginRequired,
-    PleaseWaitFewMinutes,
-    BadPassword,
-    UserNotFound
+    BadPassword, ReloginAttemptExceeded, ChallengeRequired,
+    SelectContactPointRecoveryForm, RecaptchaChallengeForm,
+    FeedbackRequired, LoginRequired
 )
-from core.verification_handler import VerificationHandler
+
+from core.device_identity_generator import DeviceIdentityGenerator
+from core.session_manager import SessionManager
 
 class LoginManager:
     def __init__(self):
-        self.session_dir = "sessions"
-        self.log_dir = "logs"
-        self.accounts_file = "akun.json"
-        self.current_client = None
-        self.current_username = None
-        
-        os.makedirs(self.session_dir, exist_ok=True)
-        os.makedirs(self.log_dir, exist_ok=True)
-    
-    def login(self, username: str, password: str) -> tuple[Client, bool]:
-        """Login with session management"""
-        client = Client()
-        client.delay_range = [2, 5]
-        
-        session_file = os.path.join(self.session_dir, f"{username}.json")
-        
-        # Try loading existing session
-        if os.path.exists(session_file):
+        self.device_gen = DeviceIdentityGenerator()
+        self.session_mgr = SessionManager()
+        self.proxy_list = []  # List proxy untuk rotator (isi dari .env atau file)
+        self._load_proxies()
+
+    def _load_proxies(self):
+        """Load proxy dari .env atau file proxies.txt"""
+        proxies = os.getenv('PROXIES', '').split(',')
+        if os.path.exists('proxies.txt'):
+            with open('proxies.txt', 'r') as f:
+                proxies.extend([line.strip() for line in f if line.strip()])
+        self.proxy_list = [p for p in proxies if p]
+        if self.proxy_list:
+            print(f"Loaded {len(self.proxy_list)} proxies for rotator.")
+
+    def _get_live_proxy(self):
+        """Ambil proxy live random, check dengan requests"""
+        if not self.proxy_list:
+            return None
+        random.shuffle(self.proxy_list)
+        for proxy in self.proxy_list:
             try:
-                client.load_settings(session_file)
-                client.login(username, password)
-                
-                # Verify session is valid
-                client.get_timeline_feed()
-                
-                self.log_event("session_login", {"username": username})
-                self.current_client = client
-                self.current_username = username
-                return client, True
-                
-            except Exception as e:
-                self.log_event("session_expired", {
-                    "username": username,
-                    "error": str(e)
-                })
-                os.remove(session_file)
-        
-        # Fresh login
-        try:
-            client.login(username, password)
-            client.dump_settings(session_file)
-            
-            self.log_event("fresh_login", {"username": username})
-            self.current_client = client
-            self.current_username = username
-            return client, True
-            
-        except ChallengeRequired as e:
-            self.log_event("challenge_required", {"username": username})
-            handler = VerificationHandler(client, username)
-            if handler.handle_challenge(e.challenge):
-                self.current_client = client
-                self.current_username = username
-                return client, True
-            return client, False
-            
-        except TwoFactorRequired:
-            self.log_event("2fa_required", {"username": username})
-            handler = VerificationHandler(client, username)
-            if handler.handle_two_factor():
-                self.current_client = client
-                self.current_username = username
-                return client, True
-            return client, False
-            
-        except BadPassword:
-            self.log_event("bad_password", {"username": username})
-            print("❌ Password salah!")
-            return client, False
-            
-        except UserNotFound:
-            self.log_event("user_not_found", {"username": username})
-            print("❌ Username tidak ditemukan!")
-            return client, False
-            
-        except PleaseWaitFewMinutes as e:
-            self.log_event("rate_limited", {"username": username})
-            print(f"⏳ Rate limited! Tunggu beberapa menit...")
-            return client, False
-            
-        except Exception as e:
-            self.log_event("login_error", {
-                "username": username,
-                "error": str(e)
-            })
-            print(f"❌ Login error: {str(e)}")
-            return client, False
-    
-    def logout(self):
-        """Logout current session"""
-        if self.current_client:
-            try:
-                self.current_client.logout()
-                self.log_event("logout", {"username": self.current_username})
+                requests.get("https://www.google.com", proxies={"http": proxy, "https": proxy}, timeout=5)
+                return proxy
             except:
                 pass
-            self.current_client = None
-            self.current_username = None
-    
-    def get_saved_accounts(self) -> list:
-        """Get list of saved accounts"""
-        if os.path.exists(self.accounts_file):
+        print("No live proxy found. Using direct connection.")
+        return None
+
+    def login_account(self, username: str, password: str) -> Tuple[Optional[Client], bool]:
+        """Login dengan device faker, proxy rotator, dan challenge handler"""
+        client = Client()
+        client.delay_range = [1, 3]  # Anti-ban delay
+
+        # Set proxy rotator
+        proxy = self._get_live_proxy()
+        if proxy:
+            client.set_proxy(proxy)
+            print(f"Using proxy: {proxy}")
+
+        # Generate device identity
+        device = self.device_gen.generate_device_identity()
+        client.set_device(device)
+
+        # Coba load session dulu
+        if self.session_mgr.load_session(client, username):
             try:
-                with open(self.accounts_file, "r") as f:
-                    return json.load(f)
-            except:
-                return []
-        return []
-    
-    def log_event(self, event_type: str, data: dict):
-        """Log login events"""
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "event": event_type,
-            "data": data
-        }
-        
-        log_file = os.path.join(self.log_dir, f"login_{datetime.now().strftime('%Y%m%d')}.log")
-        
+                client.get_timeline_feed()  # Verify session
+                self._log_event(username, "Session loaded successfully")
+                return client, True
+            except LoginRequired:
+                print("Session invalid, re-logging...")
+
+        # Login manual jika session gagal
         try:
-            with open(log_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+            client.login(username, password)
+            self.session_mgr.save_session(client)
+            self._log_event(username, "Login successful")
+            return client, True
+
+        except ChallengeRequired:
+            return self._handle_challenge(client, username, password)
+
+        except BadPassword:
+            self._log_event(username, "Bad password")
+            return None, False
+
+        except ReloginAttemptExceeded:
+            self._log_event(username, "Relogin attempt exceeded")
+            return None, False
+
+        except FeedbackRequired:
+            self._log_event(username, "Feedback required")
+            return None, False
+
         except Exception as e:
-            print(f"Log error: {e}")
+            self._log_event(username, f"Login error: {str(e)}")
+            return None, False
+
+    def _handle_challenge(self, client: Client, username: str, password: str) -> Tuple[Optional[Client], bool]:
+        """Handle challenge dengan rotator proxy jika gagal"""
+        print("\n[CHALLENGE] Akun memerlukan verifikasi!")
+        try:
+            api_path = client.last_json.get("challenge", {}).get("api_path")
+            if not api_path:
+                return None, False
+
+            choices = client.challenge_code_handler(username, lambda: print("Pilih metode: 0=SMS, 1=Email"))
+            choice = input("Pilih metode (0/1): ")
+
+            client.challenge_code_handler(username, choice)
+            code = input("Masukkan kode verifikasi: ")
+
+            client.challenge_code_handler(username, code)
+
+            client.login(username, password)
+            self.session_mgr.save_session(client)
+            self._log_event(username, "Challenge resolved")
+            return client, True
+
+        except SelectContactPointRecoveryForm:
+            print("[CHALLENGE] Select contact point")
+            # Logic serupa, rotator proxy jika gagal
+            proxy = self._get_live_proxy()
+            if proxy:
+                client.set_proxy(proxy)
+            # ... (lanjutkan logic handle)
+
+        except RecaptchaChallengeForm:
+            print("[CHALLENGE] Recaptcha required. Silakan login manual dulu.")
+            return None, False
+
+        except Exception as e:
+            self._log_event(username, f"Challenge error: {str(e)}")
+            return None, False
+
+    def _log_event(self, username: str, message: str):
+        """Log event ke file"""
+        log_entry = {
+            "timestamp": str(datetime.now()),
+            "username": username,
+            "event": message
+        }
+        log_file = "login_logs.json"
+        if os.path.exists(log_file):
+            with open(log_file, 'r+') as f:
+                logs = json.load(f)
+                logs.append(log_entry)
+                f.seek(0)
+                json.dump(logs, f, indent=2)
+        else:
+            with open(log_file, 'w') as f:
+                json.dump([log_entry], f, indent=2)
