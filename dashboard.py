@@ -536,4 +536,85 @@ def login_menu():
                 dev_model = client.device_settings.get('model', 'Unknown')
                 console.print(f"[dim]Connected via: {dev_model}[/dim]")
 
-                send_telegram_log(f"🔓 **LOGIN ALERT**\nUser: {selected_acc['username']}\nStatus: Online\nDevice: 
+                send_telegram_log(f"🔓 **LOGIN ALERT**\nUser: {selected_acc['username']}\nStatus: Online\nDevice: {dev_model}")
+                time.sleep(2)
+            else:
+                console.print("[bold red]❌ Login Gagal. Cek password/koneksi.[/bold red]")
+                questionary.press_any_key_to_continue().ask()
+
+        except TwoFactorRequired:
+            console.print("[yellow]⚠️ Masukkan Kode 2FA:[/yellow]")
+            code = questionary.text("Code:").ask()
+            try:
+                pass
+            except:
+                pass
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            questionary.press_any_key_to_continue().ask()
+
+# ================= MAIN MENU =================
+
+def main():
+    global active_client, current_user_data
+    
+    while True:
+        show_header()
+
+        if active_client:
+            status = f"[bold green]ONLINE: @{current_user_data['username']}[/bold green]"
+            menu_list = [
+                "👤 Dashboard Akun",
+                "❤️ Auto Like",
+                "👥 Auto Follow",
+                "👤 Auto Unfollow",
+                "💬 Auto Comment",  # Fitur baru
+                "📸 Auto Story Viewer",  # Fitur baru
+                "📅 Scheduled Post",  # Fitur baru simple
+                "📊 Monitor Followers (Real-time)",
+                "🚪 Logout / Ganti Akun",
+                "❌ Keluar Aplikasi"
+            ]
+        else:
+            status = "[bold red]OFFLINE (Belum Login)[/bold red]"
+            menu_list = [
+                "🔐 Login Akun",
+                "❌ Keluar Aplikasi"
+            ]
+
+        console.print(Panel(status, style="white"))
+
+        choice = questionary.select(
+            "Main Menu:",
+            choices=menu_list
+        ).ask()
+
+        if choice == "🔐 Login Akun":
+            login_menu()
+        elif choice == "👤 Dashboard Akun":
+            info_dashboard()
+        elif choice == "❤️ Auto Like":
+            feature_auto_like()
+        elif choice == "👥 Auto Follow":
+            feature_auto_follow()
+        elif choice == "👤 Auto Unfollow":
+            feature_auto_unfollow()
+        elif choice == "💬 Auto Comment":
+            feature_auto_comment()
+        elif choice == "📸 Auto Story Viewer":
+            feature_auto_story_viewer()
+        elif choice == "📅 Scheduled Post":
+            feature_scheduled_post()
+        elif choice == "📊 Monitor Followers (Real-time)":
+            feature_monitor_followers()
+        elif choice == "🚪 Logout / Ganti Akun":
+            active_client = None
+            current_user_data = None
+            console.print("[yellow]Logged out.[/yellow]")
+            time.sleep(1)
+        elif choice == "❌ Keluar Aplikasi":
+            console.print("Bye bye! 👋")
+            break
+
+if __name__ == "__main__":
+    main()
