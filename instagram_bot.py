@@ -41,10 +41,10 @@ class InstagramBot:
             settings = self.client.get_settings()
             with open(self.settings_file, 'w') as f:
                 json.dump(settings, f, indent=4)
-            print("✅ Session berhasil disimpan!")
+            print("Session berhasil disimpan!")
             return True
         except Exception as e:
-            print(f"❌ Error saat save session: {str(e)}")
+            print(f"Error saat save session: {str(e)}")
             return False
     
     def load_session(self, username):
@@ -58,10 +58,10 @@ class InstagramBot:
                 
                 # Verify session masih valid
                 self.client.get_timeline_feed()
-                print("✅ Session berhasil di-load!")
+                print("Session berhasil di-load!")
                 return True
         except Exception as e:
-            print(f"⚠️ Session tidak valid atau expired: {str(e)}")
+            print(f"Session tidak valid atau expired: {str(e)}")
             if os.path.exists(self.settings_file):
                 os.remove(self.settings_file)
             return False
@@ -69,14 +69,14 @@ class InstagramBot:
     def handle_challenge(self, username, password):
         """Handle Instagram challenge/verification"""
         print("\n" + "="*60)
-        print("⚠️ AKUN KENA CHALLENGE/VERIFIKASI!")
+        print("AKUN KENA CHALLENGE/VERIFIKASI!")
         print("="*60)
         
         try:
             # Get challenge info
             challenge_info = self.client.challenge_code_handler
             
-            print("\n📱 Instagram meminta verifikasi akun.")
+            print("\nInstagram meminta verifikasi akun.")
             print("Pilih metode verifikasi:")
             print("1. SMS (nomor telepon)")
             print("2. Email")
@@ -85,16 +85,16 @@ class InstagramBot:
             
             if choice == "1":
                 # SMS verification
-                print("\n📱 Mengirim kode verifikasi ke nomor telepon...")
+                print("\nMengirim kode verifikasi ke nomor telepon...")
                 self.client.challenge_code_handler(username, choice="0")  # 0 = phone
                 
             elif choice == "2":
                 # Email verification
-                print("\n📧 Mengirim kode verifikasi ke email...")
+                print("\nMengirim kode verifikasi ke email...")
                 self.client.challenge_code_handler(username, choice="1")  # 1 = email
             
             else:
-                print("❌ Pilihan tidak valid!")
+                print("Pilihan tidak valid!")
                 return False
             
             # Input verification code
@@ -103,18 +103,18 @@ class InstagramBot:
             
             # Submit verification code
             if self.client.challenge_code_handler(username, code=code):
-                print("✅ Verifikasi berhasil!")
+                print("Verifikasi berhasil!")
                 
                 # Re-login setelah verifikasi
                 self.client.login(username, password)
                 self.save_session()
                 return True
             else:
-                print("❌ Kode verifikasi salah!")
+                print("Kode verifikasi salah!")
                 return False
                 
         except SelectContactPointRecoveryForm:
-            print("\n📱 Instagram meminta pilih metode recovery...")
+            print("\nInstagram meminta pilih metode recovery...")
             
             try:
                 # Get available recovery methods
@@ -130,23 +130,23 @@ class InstagramBot:
                 code = input("\nMasukkan kode verifikasi: ").strip()
                 
                 if self.client.challenge_code_handler(username, code=code):
-                    print("✅ Verifikasi berhasil!")
+                    print("Verifikasi berhasil!")
                     self.client.login(username, password)
                     self.save_session()
                     return True
                     
             except Exception as e:
-                print(f"❌ Error: {str(e)}")
+                print(f"Error: {str(e)}")
                 return False
                 
         except RecaptchaChallengeForm:
-            print("\n🤖 Instagram meminta CAPTCHA verification...")
-            print("⚠️ Silakan login manual lewat aplikasi Instagram dulu")
-            print("⚠️ Setelah itu coba login lagi di bot ini")
+            print("\nInstagram meminta CAPTCHA verification...")
+            print("Silakan login manual lewat aplikasi Instagram dulu")
+            print("Setelah itu coba login lagi di bot ini")
             return False
             
         except Exception as e:
-            print(f"❌ Error saat handle challenge: {str(e)}")
+            print(f"Error saat handle challenge: {str(e)}")
             return False
     
     def login(self):
@@ -163,7 +163,7 @@ class InstagramBot:
                 # Get user info untuk verify
                 user_info = self.client.user_info_by_username(username)
                 self.current_user = user_info
-                print(f"\n✅ Login berhasil! Selamat datang @{username}")
+                print(f"\nLogin berhasil! Selamat datang @{username}")
                 return True
             except:
                 pass
@@ -172,7 +172,7 @@ class InstagramBot:
         password = input("Password: ").strip()
         
         try:
-            print("\n🔄 Mencoba login...")
+            print("\nMencoba login...")
             self.client.login(username, password)
             
             # Save session setelah login berhasil
@@ -182,31 +182,31 @@ class InstagramBot:
             user_info = self.client.user_info_by_username(username)
             self.current_user = user_info
             
-            print(f"\n✅ Login berhasil! Selamat datang @{username}")
+            print(f"\nLogin berhasil! Selamat datang @{username}")
             return True
             
         except ChallengeRequired as e:
-            print("\n⚠️ Akun memerlukan verifikasi!")
+            print("\nAkun memerlukan verifikasi!")
             return self.handle_challenge(username, password)
             
         except BadPassword:
-            print("\n❌ Password salah!")
+            print("\nPassword salah!")
             return False
             
         except ReloginAttemptExceeded:
-            print("\n❌ Terlalu banyak percobaan login!")
-            print("⚠️ Tunggu beberapa menit dan coba lagi")
+            print("\nTerlalu banyak percobaan login!")
+            print("Tunggu beberapa menit dan coba lagi")
             return False
             
         except FeedbackRequired as e:
-            print("\n❌ Akun terkena pembatasan Instagram!")
-            print(f"⚠️ Pesan: {str(e)}")
-            print("⚠️ Silakan login lewat aplikasi Instagram dulu")
+            print("\nAkun terkena pembatasan Instagram!")
+            print(f"Pesan: {str(e)}")
+            print("Silakan login lewat aplikasi Instagram dulu")
             return False
             
         except Exception as e:
-            print(f"\n❌ Error saat login: {str(e)}")
-            print("\n⚠️ Kemungkinan penyebab:")
+            print(f"\nError saat login: {str(e)}")
+            print("\nKemungkinan penyebab:")
             print("   1. Username atau password salah")
             print("   2. Akun kena checkpoint/verifikasi")
             print("   3. IP kena rate limit")
@@ -216,7 +216,7 @@ class InstagramBot:
     def show_account_info(self):
         """Tampilkan info akun Instagram"""
         if not self.current_user:
-            print("\n❌ Anda harus login terlebih dahulu!")
+            print("\nAnda harus login terlebih dahulu!")
             return
         
         try:
@@ -235,18 +235,18 @@ class InstagramBot:
             print(f"Following       : {user_info.following_count:,}")
             print(f"Posts           : {user_info.media_count:,}")
             print(f"Is Private      : {'Ya' if user_info.is_private else 'Tidak'}")
-            print(f"Is Verified     : {'Ya ✓' if user_info.is_verified else 'Tidak'}")
+            print(f"Is Verified     : {'Ya' if user_info.is_verified else 'Tidak'}")
             print(f"Profile Picture : {user_info.profile_pic_url}")
             print(f"External URL    : {user_info.external_url or '(tidak ada)'}")
             print("="*60)
             
         except Exception as e:
-            print(f"\n❌ Error saat mengambil info akun: {str(e)}")
+            print(f"\nError saat mengambil info akun: {str(e)}")
     
     def upload_profile_picture(self):
         """Upload foto profil Instagram"""
         if not self.current_user:
-            print("\n❌ Anda harus login terlebih dahulu!")
+            print("\nAnda harus login terlebih dahulu!")
             return
         
         print("\n" + "="*60)
@@ -256,21 +256,21 @@ class InstagramBot:
         file_path = input("Masukkan path file foto: ").strip()
         
         if not os.path.exists(file_path):
-            print("❌ File tidak ditemukan!")
+            print("File tidak ditemukan!")
             return
         
         try:
-            print("\n🔄 Mengupload foto profil...")
+            print("\nMengupload foto profil...")
             self.client.account_change_picture(file_path)
-            print("✅ Foto profil berhasil diupload!")
+            print("Foto profil berhasil diupload!")
             
         except Exception as e:
-            print(f"❌ Error saat upload foto: {str(e)}")
+            print(f"Error saat upload foto: {str(e)}")
     
     def change_name(self):
         """Ganti nama lengkap Instagram"""
         if not self.current_user:
-            print("\n❌ Anda harus login terlebih dahulu!")
+            print("\nAnda harus login terlebih dahulu!")
             return
         
         print("\n" + "="*60)
@@ -283,28 +283,28 @@ class InstagramBot:
         new_name = input("\nNama baru: ").strip()
         
         if not new_name:
-            print("❌ Nama tidak boleh kosong!")
+            print("Nama tidak boleh kosong!")
             return
         
         try:
-            print("\n🔄 Mengubah nama...")
+            print("\nMengubah nama...")
             self.client.account_edit(full_name=new_name)
-            print(f"✅ Nama berhasil diubah menjadi: {new_name}")
+            print(f"Nama berhasil diubah menjadi: {new_name}")
             
         except Exception as e:
-            print(f"❌ Error saat ganti nama: {str(e)}")
+            print(f"Error saat ganti nama: {str(e)}")
     
     def change_username(self):
         """Ganti username Instagram"""
         if not self.current_user:
-            print("\n❌ Anda harus login terlebih dahulu!")
+            print("\nAnda harus login terlebih dahulu!")
             return
         
         print("\n" + "="*60)
         print("GANTI USERNAME")
         print("="*60)
-        print("⚠️ WARNING: Ganti username adalah perubahan PERMANEN!")
-        print("⚠️ Username lama akan tersedia untuk diambil orang lain!")
+        print("WARNING: Ganti username adalah perubahan PERMANEN!")
+        print("Username lama akan tersedia untuk diambil orang lain!")
         
         user_info = self.client.user_info(self.current_user.pk)
         print(f"\nUsername sekarang: @{user_info.username}")
@@ -312,31 +312,31 @@ class InstagramBot:
         new_username = input("\nUsername baru: ").strip()
         
         if not new_username:
-            print("❌ Username tidak boleh kosong!")
+            print("Username tidak boleh kosong!")
             return
         
-        confirm = input(f"\n⚠️ Yakin ingin ganti username ke @{new_username}? (yes/no): ").strip().lower()
+        confirm = input(f"\nYakin ingin ganti username ke @{new_username}? (yes/no): ").strip().lower()
         
         if confirm != "yes":
-            print("❌ Dibatalkan!")
+            print("Dibatalkan!")
             return
         
         try:
-            print("\n🔄 Mengubah username...")
+            print("\nMengubah username...")
             self.client.account_edit(username=new_username)
-            print(f"✅ Username berhasil diubah menjadi: @{new_username}")
+            print(f"Username berhasil diubah menjadi: @{new_username}")
             
             # Update session dengan username baru
             self.save_session()
             
         except Exception as e:
-            print(f"❌ Error saat ganti username: {str(e)}")
-            print("⚠️ Kemungkinan username sudah dipakai atau tidak valid")
+            print(f"Error saat ganti username: {str(e)}")
+            print("Kemungkinan username sudah dipakai atau tidak valid")
     
     def change_bio(self):
         """Ganti bio Instagram"""
         if not self.current_user:
-            print("\n❌ Anda harus login terlebih dahulu!")
+            print("\nAnda harus login terlebih dahulu!")
             return
         
         print("\n" + "="*60)
@@ -357,23 +357,23 @@ class InstagramBot:
         new_bio = "\n".join(lines)
         
         try:
-            print("\n🔄 Mengubah bio...")
+            print("\nMengubah bio...")
             self.client.account_edit(biography=new_bio)
-            print("✅ Bio berhasil diubah!")
+            print("Bio berhasil diubah!")
             
         except Exception as e:
-            print(f"❌ Error saat ganti bio: {str(e)}")
+            print(f"Error saat ganti bio: {str(e)}")
     
     def change_email(self):
         """Ganti email Instagram"""
         if not self.current_user:
-            print("\n❌ Anda harus login terlebih dahulu!")
+            print("\nAnda harus login terlebih dahulu!")
             return
         
         print("\n" + "="*60)
         print("GANTI EMAIL")
         print("="*60)
-        print("⚠️ WARNING: Fitur ganti email memerlukan verifikasi dari Instagram!")
+        print("WARNING: Fitur ganti email memerlukan verifikasi dari Instagram!")
         
         user_info = self.client.user_info(self.current_user.pk)
         print(f"\nEmail sekarang: {user_info.public_email or '(tidak tersedia)'}")
@@ -381,17 +381,17 @@ class InstagramBot:
         new_email = input("\nEmail baru: ").strip()
         
         if not new_email:
-            print("❌ Email tidak boleh kosong!")
+            print("Email tidak boleh kosong!")
             return
         
         try:
-            print("\n🔄 Mengubah email...")
+            print("\nMengubah email...")
             self.client.account_edit(email=new_email)
-            print("✅ Email berhasil diubah!")
-            print("⚠️ Cek email baru untuk verifikasi dari Instagram")
+            print("Email berhasil diubah!")
+            print("Cek email baru untuk verifikasi dari Instagram")
             
         except Exception as e:
-            print(f"❌ Error saat ganti email: {str(e)}")
+            print(f"Error saat ganti email: {str(e)}")
     
     def logout(self):
         """Logout dan hapus session"""
@@ -400,9 +400,9 @@ class InstagramBot:
             if os.path.exists(self.settings_file):
                 os.remove(self.settings_file)
             self.current_user = None
-            print("\n✅ Logout berhasil! Session telah dihapus.")
+            print("\nLogout berhasil! Session telah dihapus.")
         except Exception as e:
-            print(f"\n❌ Error saat logout: {str(e)}")
+            print(f"\nError saat logout: {str(e)}")
     
     def show_main_menu(self):
         """Tampilkan menu utama"""
@@ -416,11 +416,10 @@ class InstagramBot:
             print("4. Ganti Username")
             print("5. Ganti Bio")
             print("6. Ganti Email")
-            print("7. Logout (hapus session)")
-            print("0. Keluar")
+            print("7. Logout")
             print("="*60)
             
-            choice = input("Pilih menu (0-7): ").strip()
+            choice = input("Pilih menu (1-7): ").strip()
             
             if choice == '1':
                 self.show_account_info()
@@ -436,58 +435,11 @@ class InstagramBot:
                 self.change_email()
             elif choice == '7':
                 self.logout()
-                return True
-            elif choice == '0':
-                print("\nTerima kasih! Sampai jumpa!")
-                return False
+                break
             else:
-                print("\n❌ Pilihan tidak valid!")
-    
-    def run(self):
-        """Main application loop"""
-        print("="*60)
-        print("INSTAGRAM ACCOUNT MANAGEMENT BOT")
-        print("="*60)
-        print("Bot dengan fitur session persistence & auto verification!")
-        print("\n✨ Fitur:")
-        print("   - Login 1x, pakai selamanya (session saved)")
-        print("   - Auto detect & handle verification/challenge")
-        print("   - Manage akun: info, foto, nama, username, bio, email")
-        print("="*60)
-        
-        while True:
-            if not self.current_user:
-                print("\n" + "="*60)
-                print("MENU LOGIN")
-                print("="*60)
-                print("1. Login Instagram")
-                print("0. Keluar")
-                print("="*60)
-                
-                choice = input("Pilih menu (0-1): ").strip()
-                
-                if choice == '1':
-                    if self.login():
-                        if not self.show_main_menu():
-                            break
-                elif choice == '0':
-                    print("\nTerima kasih! Sampai jumpa!")
-                    break
-                else:
-                    print("\n❌ Pilihan tidak valid!")
-            else:
-                if not self.show_main_menu():
-                    break
-
-def main():
-    """Main entry point"""
-    try:
-        bot = InstagramBot()
-        bot.run()
-    except KeyboardInterrupt:
-        print("\n\nProgram dihentikan oleh user. Terima kasih!")
-    except Exception as e:
-        print(f"\n❌ Error: {str(e)}")
+                print("Pilihan tidak valid!")
 
 if __name__ == "__main__":
-    main()
+    bot = InstagramBot()
+    if bot.login():
+        bot.show_main_menu()
