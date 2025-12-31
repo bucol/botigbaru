@@ -4,8 +4,9 @@ import time
 import random
 import threading
 import json
-from datetime import datetime
-from dotenv import load_dotenv  # TAMBAHAN
+from datetime import datetime, timedelta
+import schedule  # Tambahan untuk scheduled post simple
+from dotenv import load_dotenv
 
 # Load environment variables dari file .env
 load_dotenv()
@@ -60,6 +61,7 @@ active_client = None
 current_user_data = None
 monitoring_thread = None
 last_follower_count = None
+scheduler_thread = None
 
 # ================= HELPER FUNCTIONS =================
 def clear():
@@ -89,7 +91,7 @@ def show_header():
     grid.add_column(justify="center", ratio=1)
     grid.add_row(
         Panel(
-            "[bold cyan]🔥 INSTAGRAM SAAS DASHBOARD v2.0[/bold cyan]\n"
+            "[bold cyan]🔥 INSTAGRAM SAAS DASHBOARD v3.0[/bold cyan]\n"
             "[white]Control Center • Device Faker • Smart Automation[/white]",
             style="bold blue",
             subtitle="Created by Lu Sendiri"
@@ -244,7 +246,7 @@ def feature_auto_follow():
     questionary.press_any_key_to_continue().ask()
 
 def feature_auto_unfollow():
-    """Fitur baru: Auto unfollow massal (mirip auto follow, tapi unfollow following list)"""
+    """Auto unfollow massal"""
     if not active_client: return
 
     console.print("\n[bold cyan]👥 AUTO UNFOLLOW MANAGER[/bold cyan]")
@@ -282,8 +284,114 @@ def feature_auto_unfollow():
     send_telegram_log(laporan)
     questionary.press_any_key_to_continue().ask()
 
+def feature_auto_comment():
+    """Fitur baru: Auto comment massal mirip auto like"""
+    if not active_client: return
+
+    console.print("\n[bold cyan]💬 AUTO COMMENT MANAGER[/bold cyan]")
+    hashtag = questionary.text("Target Hashtag (tanpa #):").ask()
+    if not hashtag: return
+
+    limit = int(questionary.text("Jumlah Comment:", default="10").ask())
+    comments = questionary.text("Daftar comment (pisah koma):", default="Nice!,Cool post,Love it").ask().split(',')
+
+    sukses = 0
+    gagal = 0
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(bar_width=None),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        "•",
+        TextColumn("[green]Sukses: {task.fields[ok]}[/green]"),
+        console=console
+    ) as progress:
+
+        task_id = progress.add_task("Mencari Target...", total=limit, ok=0)
+
+        try:
+            medias = active_client.hashtag_medias_v1(hashtag, amount=limit, tab_key="recent")
+            if not medias:
+                medias = active_client.hashtag_medias_v1(hashtag, amount=limit, tab_key="top")
+
+            if not medias:
+                console.print("[red]❌ Tidak ada postingan ditemukan![/red]")
+                return
+
+            progress.update(task_id, description="Commenting...", total=len(medias))
+
+            for media in medias:
+                try:
+                    comment_text = random.choice(comments).strip()
+                    time.sleep(random.uniform(2, 5))
+                    active_client.media_comment(media.id, comment_text)
+                    sukses += 1
+                    progress.update(task_id, advance=1, ok=sukses)
+                    time.sleep(random.uniform(3, 8))
+                except Exception as e:
+                    gagal += 1
+                    if "feedback_required" in str(e).lower():
+                        console.print("[bold red]⚠️ TERDETEKSI SOFTBAN! Berhenti...[/bold red]")
+                        break
+
+        except Exception as e:
+            console.print(f"[red]Error System: {e}[/red]")
+
+    laporan = (
+        f"✅ **HASIL AUTO COMMENT**\n"
+        f"Akun: {current_user_data['username']}\n"
+        f"Target: #{hashtag}\n"
+        f"Sukses: {sukses}\n"
+        f"Gagal: {gagal}"
+    )
+    console.print(Panel(laporan, style="green" if sukses > 0 else "red"))
+    send_telegram_log(laporan)
+    questionary.press_any_key_to_continue().ask()
+
+def feature_auto_story_viewer():
+    """Fitur baru: Auto view stories massal untuk engagement"""
+    if not active_client: return
+
+    console.print("\n[bold cyan]📸 AUTO STORY VIEWER[/bold cyan]")
+    target = questionary.text("Username Target (View stories follower dia):").ask()
+    if not target: return
+    limit = int(questionary.text("Jumlah Stories View:", default="10").ask())
+
+    sukses = 0
+
+    with Progress(
+        SpinnerColumn(), TextColumn("{task.description}"), BarColumn(),
+        TextColumn("{task.completed}/{task.total}"), console=console
+    ) as progress:
+
+        task = progress.add_task(f"Mengambil stories dari @{target}...", total=limit)
+
+        try:
+            target_id = active_client.user_id_from_username(target)
+            stories = active_client.user_stories(target_id, amount=limit)
+
+            progress.update(task, description="Viewing stories...", total=len(stories))
+
+            for story in stories:
+                try:
+                    active_client.story_seen([story.pk])
+                    sukses += 1
+                    progress.advance(task)
+                    time.sleep(random.uniform(2, 5))  # Delay anti-ban
+                except Exception as e:
+                    pass
+
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+
+    laporan = f"✅ **HASIL AUTO STORY VIEW**\nAkun: {current_user_data['username']}\nSource: @{target}\nSukses: {sukses}"
+    console.print(Panel(laporan, style="blue"))
+    send_telegram_log(laporan)
+    questionary.press_any_key_to_continue().ask()
+
 def feature_monitor_followers():
-    """Fitur baru: Monitoring followers real-time via Telegram"""
+    """Monitoring followers real-time via Telegram"""
     global monitoring_thread, last_follower_count
     
     if not active_client: return
@@ -321,6 +429,68 @@ def feature_monitor_followers():
     monitoring_thread.start()
     
     console.print("[dim]Monitoring berjalan di background. Kembali ke menu...[/dim]")
+    questionary.press_any_key_to_continue().ask()
+
+def feature_scheduled_post():
+    """Fitur scheduled post simple: Set jadwal via menu, run background tanpa cron"""
+    global scheduler_thread
+    
+    if not active_client: return
+
+    if scheduler_thread and scheduler_thread.is_alive():
+        console.print("[yellow]Scheduler sudah berjalan! Untuk stop, restart bot.[/yellow]")
+        return
+
+    console.print("\n[bold cyan]📅 SCHEDULED POST MANAGER[/bold cyan]")
+    console.print("[dim]Set jadwal post otomatis (foto random dari folder 'photos', caption random).[/dim]")
+
+    photo_dir = "photos"  # Folder foto
+    if not os.path.exists(photo_dir):
+        os.makedirs(photo_dir)
+        console.print("[yellow]Folder 'photos' dibuat. Tambah foto JPG/PNG di sana.[/yellow]")
+
+    captions = questionary.text("Daftar caption (pisah koma):", default="Hello world!,Good day,Insta post").ask().split(',')
+    interval = questionary.select(
+        "Jadwal post:",
+        choices=["Setiap jam", "Setiap hari", "Setiap minggu", "Custom (menit)"]
+    ).ask()
+
+    if interval == "Custom (menit)":
+        minutes = int(questionary.text("Setiap berapa menit:", default="60").ask())
+        schedule_interval = lambda: schedule.every(minutes).minutes.do(post_job)
+    elif interval == "Setiap jam":
+        schedule_interval = lambda: schedule.every().hour.do(post_job)
+    elif interval == "Setiap hari":
+        schedule_interval = lambda: schedule.every().day.do(post_job)
+    elif interval == "Setiap minggu":
+        schedule_interval = lambda: schedule.every().week.do(post_job)
+
+    def post_job():
+        try:
+            photos = [f for f in os.listdir(photo_dir) if f.lower().endswith(('.jpg', '.png'))]
+            if not photos:
+                send_telegram_log("❌ No photos in folder for scheduled post!")
+                return
+            photo_path = os.path.join(photo_dir, random.choice(photos))
+            caption = random.choice(captions).strip()
+            active_client.photo_upload(photo_path, caption=caption)
+            msg = f"📸 **SCHEDULED POST SUKSES**\nAkun: {current_user_data['username']}\nCaption: {caption}"
+            send_telegram_log(msg)
+            console.print(f"[green]{msg}[/green]")
+        except Exception as e:
+            send_telegram_log(f"❌ Scheduled post error: {str(e)}")
+
+    def scheduler_loop():
+        schedule_interval()
+        while True:
+            schedule.run_pending()
+            time.sleep(1)
+
+    scheduler_thread = threading.Thread(target=scheduler_loop)
+    scheduler_thread.daemon = True
+    scheduler_thread.start()
+    
+    console.print("[green]Scheduled post dimulai di background! Cek Telegram untuk notif.[/green]")
     questionary.press_any_key_to_continue().ask()
 
 # ================= LOGIN SYSTEM =================
@@ -366,76 +536,4 @@ def login_menu():
                 dev_model = client.device_settings.get('model', 'Unknown')
                 console.print(f"[dim]Connected via: {dev_model}[/dim]")
 
-                send_telegram_log(f"🔓 **LOGIN ALERT**\nUser: {selected_acc['username']}\nStatus: Online\nDevice: {dev_model}")
-                time.sleep(2)
-            else:
-                console.print("[bold red]❌ Login Gagal. Cek password/koneksi.[/bold red]")
-                questionary.press_any_key_to_continue().ask()
-
-        except TwoFactorRequired:
-            console.print("[yellow]⚠️ Masukkan Kode 2FA:[/yellow]")
-            code = questionary.text("Code:").ask()
-            try:
-                pass
-            except:
-                pass
-        except Exception as e:
-            console.print(f"[red]Error: {e}[/red]")
-            questionary.press_any_key_to_continue().ask()
-
-# ================= MAIN MENU =================
-
-def main():
-    global active_client, current_user_data
-    
-    while True:
-        show_header()
-
-        if active_client:
-            status = f"[bold green]ONLINE: @{current_user_data['username']}[/bold green]"
-            menu_list = [
-                "👤 Dashboard Akun",
-                "❤️ Auto Like",
-                "👥 Auto Follow",
-                "👤 Auto Unfollow",  # Fitur baru
-                "📊 Monitor Followers (Real-time)",  # Fitur baru
-                "🚪 Logout / Ganti Akun",
-                "❌ Keluar Aplikasi"
-            ]
-        else:
-            status = "[bold red]OFFLINE (Belum Login)[/bold red]"
-            menu_list = [
-                "🔐 Login Akun",
-                "❌ Keluar Aplikasi"
-            ]
-
-        console.print(Panel(status, style="white"))
-
-        choice = questionary.select(
-            "Main Menu:",
-            choices=menu_list
-        ).ask()
-
-        if choice == "🔐 Login Akun":
-            login_menu()
-        elif choice == "👤 Dashboard Akun":
-            info_dashboard()
-        elif choice == "❤️ Auto Like":
-            feature_auto_like()
-        elif choice == "👥 Auto Follow":
-            feature_auto_follow()
-        elif choice == "👤 Auto Unfollow":
-            feature_auto_unfollow()
-        elif choice == "📊 Monitor Followers (Real-time)":
-            feature_monitor_followers()
-        elif choice == "🚪 Logout / Ganti Akun":
-            active_client = None
-            current_user_data = None
-            console.print("[yellow]Logged out.[/yellow]")
-            time.sleep(1)
-        elif choice == "❌ Keluar Aplikasi":
-            console.print("Bye bye! 👋")
-            break
-
-if __name__ == "__main__":
-    main()
+                send_telegram_log(f"🔓 **LOGIN ALERT**\nUser: {selected_acc['username']}\nStatus: Online\nDevice: 
