@@ -5,5 +5,6 @@ telebot
 python-dotenv
 cryptography
 colorama
-requests  # Buat proxy check kalau perlu
-schedule  # Buat scheduled post simple
+requests
+schedule
+matplotlib  # Buat grafik sederhana di analytics
