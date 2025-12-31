@@ -1,7 +1,7 @@
 import json
 import os
 import datetime
-import csv  # Tambahan untuk CSV
+import csv
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 
@@ -119,6 +119,19 @@ class AccountManager:
                 if len(row) >= 2:
                     self.add_account(row[0], row[1])
         print(f"Import dari {csv_file} berhasil!")
+
+    def import_from_txt(self, txt_file="accounts.txt"):
+        """Fitur baru: Bulk add dari TXT (format username:password per baris)"""
+        if not os.path.exists(txt_file):
+            print(f"File {txt_file} tidak ada!")
+            return
+        with open(txt_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if ':' in line:
+                    username, password = line.split(':', 1)
+                    self.add_account(username.strip(), password.strip())
+        print(f"Bulk import dari {txt_file} berhasil!")
 
     @property
     def accounts_db(self):
