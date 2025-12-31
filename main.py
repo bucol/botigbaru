@@ -1,8 +1,14 @@
 # main.py - versi minimal aman
 
 from core.device_identity_generator import DeviceIdentityGenerator
-from core.verification_handler import VerificationHandler
-from core.session_manager_v2 import SessionManagerV2
+# Dummy verification_handler kalau hilang
+try:
+    from core.verification_handler import VerificationHandler
+except ImportError:
+    class VerificationHandler:
+        def __init__(self):
+            self.max_retries = 3
+from core.session_manager import SessionManager as SessionManagerV2
 from core.account_manager import AccountManager
 from core.login_manager import LoginManager
 
