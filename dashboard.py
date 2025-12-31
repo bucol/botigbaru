@@ -62,6 +62,7 @@ current_user_data = None
 monitoring_thread = None
 last_follower_count = None
 scheduler_thread = None
+reply_thread = None
 
 # ================= HELPER FUNCTIONS =================
 def clear():
@@ -91,7 +92,7 @@ def show_header():
     grid.add_column(justify="center", ratio=1)
     grid.add_row(
         Panel(
-            "[bold cyan]🔥 INSTAGRAM SAAS DASHBOARD v3.0[/bold cyan]\n"
+            "[bold cyan]🔥 INSTAGRAM SAAS DASHBOARD v4.0[/bold cyan]\n"
             "[white]Control Center • Device Faker • Smart Automation[/white]",
             style="bold blue",
             subtitle="Created by Lu Sendiri"
@@ -285,7 +286,7 @@ def feature_auto_unfollow():
     questionary.press_any_key_to_continue().ask()
 
 def feature_auto_comment():
-    """Fitur baru: Auto comment massal mirip auto like"""
+    """Auto comment massal mirip auto like"""
     if not active_client: return
 
     console.print("\n[bold cyan]💬 AUTO COMMENT MANAGER[/bold cyan]")
@@ -350,7 +351,7 @@ def feature_auto_comment():
     questionary.press_any_key_to_continue().ask()
 
 def feature_auto_story_viewer():
-    """Fitur baru: Auto view stories massal untuk engagement"""
+    """Auto view stories massal untuk engagement"""
     if not active_client: return
 
     console.print("\n[bold cyan]📸 AUTO STORY VIEWER[/bold cyan]")
@@ -388,6 +389,107 @@ def feature_auto_story_viewer():
     laporan = f"✅ **HASIL AUTO STORY VIEW**\nAkun: {current_user_data['username']}\nSource: @{target}\nSukses: {sukses}"
     console.print(Panel(laporan, style="blue"))
     send_telegram_log(laporan)
+    questionary.press_any_key_to_continue().ask()
+
+def feature_auto_dm():
+    """Fitur baru: Auto DM massal (kirim pesan ke follower/target dengan variasi, delay mirip manusia)"""
+    if not active_client: return
+
+    console.print("\n[bold cyan]📩 AUTO DM MANAGER[/bold cyan]")
+    target = questionary.text("Username Target (Kirim DM ke follower dia):").ask()
+    if not target: return
+    limit = int(questionary.text("Jumlah DM:", default="10").ask())
+    messages = questionary.text("Daftar pesan DM (pisah koma):", default="Hi!,Nice profile,Follow back?").ask().split(',')
+
+    sukses = 0
+    gagal = 0
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(bar_width=None),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        "•",
+        TextColumn("[green]Sukses: {task.fields[ok]}[/green]"),
+        console=console
+    ) as progress:
+
+        task_id = progress.add_task("Mencari Target...", total=limit, ok=0)
+
+        try:
+            target_id = active_client.user_id_from_username(target)
+            followers = active_client.user_followers(target_id, amount=limit)
+
+            progress.update(task_id, description="Sending DM...", total=len(followers))
+
+            for user_id in followers:
+                try:
+                    msg_text = random.choice(messages).strip()
+                    time.sleep(random.uniform(5, 12))  # Delay mirip manusia
+                    active_client.direct_send(msg_text, [user_id])
+                    sukses += 1
+                    progress.update(task_id, advance=1, ok=sukses)
+                    time.sleep(random.uniform(3, 8))
+                except Exception as e:
+                    gagal += 1
+                    if "feedback_required" in str(e).lower():
+                        console.print("[bold red]⚠️ TERDETEKSI SOFTBAN! Berhenti...[/bold red]")
+                        break
+
+        except Exception as e:
+            console.print(f"[red]Error System: {e}[/red]")
+
+    laporan = (
+        f"✅ **HASIL AUTO DM**\n"
+        f"Akun: {current_user_data['username']}\n"
+        f"Target: @{target}\n"
+        f"Sukses: {sukses}\n"
+        f"Gagal: {gagal}"
+    )
+    console.print(Panel(laporan, style="green" if sukses > 0 else "red"))
+    send_telegram_log(laporan)
+    questionary.press_any_key_to_continue().ask()
+
+def feature_auto_reply_comments():
+    """Fitur baru: Auto reply comments (monitor recent comments dan reply otomatis dengan variasi, background)"""
+    global reply_thread
+    
+    if not active_client: return
+
+    if reply_thread and reply_thread.is_alive():
+        console.print("[yellow]Auto reply sudah berjalan! Tekan Ctrl+C untuk stop.[/yellow]")
+        return
+
+    console.print("\n[bold cyan]💬 AUTO REPLY COMMENTS[/bold cyan]")
+    interval = int(questionary.text("Interval cek comments (detik):", default="300").ask())
+    replies = questionary.text("Daftar reply (pisah koma):", default="Thanks!,Appreciate it,Great comment!").ask().split(',')
+
+    def reply_loop():
+        last_comment_id = None
+        while True:
+            try:
+                my_id = active_client.user_id
+                medias = active_client.user_medias(my_id, amount=5)  # Cek recent posts
+                for media in medias:
+                    comments = active_client.media_comments(media.id, amount=10)
+                    for comment in comments:
+                        if last_comment_id and comment.pk <= last_comment_id:
+                            continue
+                        reply_text = random.choice(replies).strip()
+                        time.sleep(random.uniform(2, 5))  # Delay mirip manusia
+                        active_client.comment_reply(media.id, comment.pk, reply_text)
+                        send_telegram_log(f"📩 Replied to comment: {reply_text}")
+                if comments:
+                    last_comment_id = comments[0].pk
+                time.sleep(interval)
+            except Exception as e:
+                console.print(f"[red]Auto reply error: {e}. Restart fitur.[/red]")
+
+    reply_thread = threading.Thread(target=reply_loop)
+    reply_thread.daemon = True
+    reply_thread.start()
+    
+    console.print("[dim]Auto reply berjalan di background. Kembali ke menu...[/dim]")
     questionary.press_any_key_to_continue().ask()
 
 def feature_monitor_followers():
@@ -432,7 +534,7 @@ def feature_monitor_followers():
     questionary.press_any_key_to_continue().ask()
 
 def feature_scheduled_post():
-    """Fitur scheduled post simple: Set jadwal via menu, run background tanpa cron"""
+    """Scheduled post simple: Set jadwal via menu, run background tanpa cron"""
     global scheduler_thread
     
     if not active_client: return
@@ -553,6 +655,36 @@ def login_menu():
             console.print(f"[red]Error: {e}[/red]")
             questionary.press_any_key_to_continue().ask()
 
+def switch_account():
+    """Fitur baru: Multi-account switcher (switch akun tanpa logout full, reload session)"""
+    global active_client, current_user_data
+
+    if not active_client:
+        console.print("[red]Login dulu sebelum switch![/red]")
+        return
+
+    acc_manager = AccountManager()
+    accounts = acc_manager.get_all_accounts()
+    choices = [acc['username'] for acc in accounts if acc['username'] != current_user_data['username']]
+    if not choices:
+        console.print("[yellow]Tidak ada akun lain untuk switch![/yellow]")
+        return
+    choices.append("❌ Batal")
+
+    choice = questionary.select("Pilih Akun untuk Switch:", choices=choices).ask()
+    if choice == "❌ Batal": return
+
+    selected_acc = next((a for a in accounts if a['username'] == choice), None)
+    lm = LoginManager()
+    client, success = lm.login_account(selected_acc['username'], selected_acc['password'])
+    if success:
+        active_client = client
+        current_user_data = selected_acc
+        console.print(f"[green]Switch berhasil ke @{choice}![/green]")
+        send_telegram_log(f"🔄 **SWITCH AKUN**\nKe: {choice}")
+    else:
+        console.print("[red]Switch gagal![/red]")
+
 # ================= MAIN MENU =================
 
 def main():
@@ -568,10 +700,13 @@ def main():
                 "❤️ Auto Like",
                 "👥 Auto Follow",
                 "👤 Auto Unfollow",
-                "💬 Auto Comment",  # Fitur baru
-                "📸 Auto Story Viewer",  # Fitur baru
-                "📅 Scheduled Post",  # Fitur baru simple
+                "💬 Auto Comment",
+                "📩 Auto DM",  # Fitur baru
+                "📸 Auto Story Viewer",
+                "💬 Auto Reply Comments",  # Fitur baru
+                "📅 Scheduled Post",
                 "📊 Monitor Followers (Real-time)",
+                "🔄 Switch Akun",  # Fitur baru
                 "🚪 Logout / Ganti Akun",
                 "❌ Keluar Aplikasi"
             ]
@@ -601,12 +736,18 @@ def main():
             feature_auto_unfollow()
         elif choice == "💬 Auto Comment":
             feature_auto_comment()
+        elif choice == "📩 Auto DM":
+            feature_auto_dm()
         elif choice == "📸 Auto Story Viewer":
             feature_auto_story_viewer()
+        elif choice == "💬 Auto Reply Comments":
+            feature_auto_reply_comments()
         elif choice == "📅 Scheduled Post":
             feature_scheduled_post()
         elif choice == "📊 Monitor Followers (Real-time)":
             feature_monitor_followers()
+        elif choice == "🔄 Switch Akun":
+            switch_account()
         elif choice == "🚪 Logout / Ganti Akun":
             active_client = None
             current_user_data = None
