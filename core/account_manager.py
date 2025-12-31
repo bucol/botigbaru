@@ -1,6 +1,7 @@
 import json
 import os
 import datetime
+import csv  # Tambahan untuk CSV
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 
@@ -23,7 +24,7 @@ class AccountManager:
             self.cipher = Fernet(base64.urlsafe_b64encode(key_bytes))
         else:
             self.cipher = None
-            print("⚠️ ENCRYPTION_KEY tidak diset. Password akan disimpan terenkripsi dengan key default.")
+            print("ENCRYPTION_KEY tidak diset. Password akan disimpan terenkripsi dengan key default.")
             # Generate default key (untuk development only)
             default_key = Fernet.generate_key()
             self.cipher = Fernet(default_key)
@@ -95,6 +96,29 @@ class AccountManager:
     def _save_db(self, accounts):
         with open(self.db_file, 'w') as f:
             json.dump(accounts, f, indent=2)
+
+    def export_to_csv(self, csv_file="accounts_export.csv"):
+        """Export akun ke CSV (username,password decrypted)"""
+        accounts = self.get_all_accounts()
+        with open(csv_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['username', 'password'])  # Header
+            for acc in accounts:
+                writer.writerow([acc['username'], self._decrypt(acc['password'])])
+        print(f"Export berhasil ke {csv_file}")
+
+    def import_from_csv(self, csv_file="accounts_import.csv"):
+        """Import akun dari CSV, enkripsi password"""
+        if not os.path.exists(csv_file):
+            print(f"File {csv_file} tidak ada!")
+            return
+        with open(csv_file, 'r') as f:
+            reader = csv.reader(f)
+            next(reader)  # Skip header
+            for row in reader:
+                if len(row) >= 2:
+                    self.add_account(row[0], row[1])
+        print(f"Import dari {csv_file} berhasil!")
 
     @property
     def accounts_db(self):
