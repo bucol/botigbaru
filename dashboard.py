@@ -58,6 +58,8 @@ bot_tele = telebot.TeleBot(TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
 # Global Variables
 active_client = None
 current_user_data = None
+monitoring_thread = None
+last_follower_count = None
 
 # ================= HELPER FUNCTIONS =================
 def clear():
@@ -241,6 +243,86 @@ def feature_auto_follow():
     send_telegram_log(laporan)
     questionary.press_any_key_to_continue().ask()
 
+def feature_auto_unfollow():
+    """Fitur baru: Auto unfollow massal (mirip auto follow, tapi unfollow following list)"""
+    if not active_client: return
+
+    console.print("\n[bold cyan]👥 AUTO UNFOLLOW MANAGER[/bold cyan]")
+    limit = int(questionary.text("Jumlah Unfollow:", default="10").ask())
+
+    sukses = 0
+
+    with Progress(
+        SpinnerColumn(), TextColumn("{task.description}"), BarColumn(),
+        TextColumn("{task.completed}/{task.total}"), console=console
+    ) as progress:
+
+        task = progress.add_task("Mengambil list following...", total=limit)
+
+        try:
+            my_id = active_client.user_id
+            following = active_client.user_following(my_id, amount=limit)
+
+            progress.update(task, description="Unfollowing...", total=len(following))
+
+            for uid in following:
+                try:
+                    active_client.user_unfollow(uid)
+                    sukses += 1
+                    progress.advance(task)
+                    time.sleep(random.uniform(5, 12))  # Delay anti-ban
+                except Exception as e:
+                    pass
+
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+
+    laporan = f"✅ **HASIL AUTO UNFOLLOW**\nAkun: {current_user_data['username']}\nSukses: {sukses}"
+    console.print(Panel(laporan, style="blue"))
+    send_telegram_log(laporan)
+    questionary.press_any_key_to_continue().ask()
+
+def feature_monitor_followers():
+    """Fitur baru: Monitoring followers real-time via Telegram"""
+    global monitoring_thread, last_follower_count
+    
+    if not active_client: return
+
+    if monitoring_thread and monitoring_thread.is_alive():
+        console.print("[yellow]Monitoring sudah berjalan! Tekan Ctrl+C untuk stop.[/yellow]")
+        return
+
+    console.print("\n[bold cyan]📊 FOLLOWERS MONITOR[/bold cyan]")
+    interval = int(questionary.text("Interval cek (detik):", default="60").ask())
+
+    def monitor_loop():
+        global last_follower_count
+        try:
+            info = active_client.user_info(active_client.user_id)
+            last_follower_count = info.follower_count
+            console.print(f"[green]Monitoring dimulai. Followers awal: {last_follower_count:,}[/green]")
+            
+            while True:
+                time.sleep(interval)
+                info = active_client.user_info(active_client.user_id)
+                current_count = info.follower_count
+                
+                if current_count != last_follower_count:
+                    change = current_count - last_follower_count
+                    msg = f"📈 **FOLLOWERS UPDATE**\nAkun: {current_user_data['username']}\nPerubahan: {'+' if change > 0 else ''}{change}\nTotal sekarang: {current_count:,}"
+                    send_telegram_log(msg)
+                    console.print(f"[yellow]{msg}[/yellow]")
+                    last_follower_count = current_count
+        except Exception as e:
+            console.print(f"[red]Monitoring error: {e}. Restart fitur.[/red]")
+
+    monitoring_thread = threading.Thread(target=monitor_loop)
+    monitoring_thread.daemon = True
+    monitoring_thread.start()
+    
+    console.print("[dim]Monitoring berjalan di background. Kembali ke menu...[/dim]")
+    questionary.press_any_key_to_continue().ask()
+
 # ================= LOGIN SYSTEM =================
 
 def login_menu():
@@ -315,6 +397,8 @@ def main():
                 "👤 Dashboard Akun",
                 "❤️ Auto Like",
                 "👥 Auto Follow",
+                "👤 Auto Unfollow",  # Fitur baru
+                "📊 Monitor Followers (Real-time)",  # Fitur baru
                 "🚪 Logout / Ganti Akun",
                 "❌ Keluar Aplikasi"
             ]
@@ -340,6 +424,10 @@ def main():
             feature_auto_like()
         elif choice == "👥 Auto Follow":
             feature_auto_follow()
+        elif choice == "👤 Auto Unfollow":
+            feature_auto_unfollow()
+        elif choice == "📊 Monitor Followers (Real-time)":
+            feature_monitor_followers()
         elif choice == "🚪 Logout / Ganti Akun":
             active_client = None
             current_user_data = None
