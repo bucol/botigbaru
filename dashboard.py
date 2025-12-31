@@ -7,6 +7,7 @@ import json
 from datetime import datetime, timedelta
 import schedule  # Tambahan untuk scheduled post simple
 from dotenv import load_dotenv
+import matplotlib.pyplot as plt  # Buat chart simple di analytics
 
 # Load environment variables dari file .env
 load_dotenv()
@@ -30,6 +31,7 @@ sys.path.append(os.getcwd())
 try:
     from core.account_manager import AccountManager
     from core.login_manager import LoginManager
+    from core.hashtag_generator import HashtagGenerator  # Fitur baru
     from instagrapi.exceptions import (
         BadPassword, TwoFactorRequired, ChallengeRequired,
         FeedbackRequired, LoginRequired
@@ -55,6 +57,7 @@ if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
 # Inisialisasi
 console = Console()
 bot_tele = telebot.TeleBot(TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
+hashtag_gen = HashtagGenerator()  # Fitur baru
 
 # Global Variables
 active_client = None
@@ -63,6 +66,9 @@ monitoring_thread = None
 last_follower_count = None
 scheduler_thread = None
 reply_thread = None
+action_counters = {'like': 0, 'follow': 0, 'dm': 0, 'reply': 0}  # Fitur limiter harian
+last_reset_date = datetime.now().date()  # Reset daily
+daily_limits = {'like': 100, 'follow': 50, 'dm': 30, 'reply': 50}  # Configurable
 
 # ================= HELPER FUNCTIONS =================
 def clear():
@@ -92,13 +98,40 @@ def show_header():
     grid.add_column(justify="center", ratio=1)
     grid.add_row(
         Panel(
-            "[bold cyan]🔥 INSTAGRAM SAAS DASHBOARD v4.0[/bold cyan]\n"
+            "[bold cyan]🔥 INSTAGRAM SAAS DASHBOARD v5.0[/bold cyan]\n"
             "[white]Control Center • Device Faker • Smart Automation[/white]",
             style="bold blue",
             subtitle="Created by Lu Sendiri"
         )
     )
     console.print(grid)
+
+def check_daily_limit(action_type):
+    """Fitur limiter harian: Cek dan reset counter daily"""
+    global action_counters, last_reset_date
+    today = datetime.now().date()
+    if today > last_reset_date:
+        action_counters = {'like': 0, 'follow': 0, 'dm': 0, 'reply': 0}
+        last_reset_date = today
+    if action_counters[action_type] >= daily_limits[action_type]:
+        console.print(f"[red]⚠️ Limit harian {action_type} tercapai! Tunggu besok.[/red]")
+        return False
+    action_counters[action_type] += 1
+    return True
+
+def save_followers_history(followers: int):
+    """Simpan history followers untuk analytics"""
+    history_file = "followers_history.json"
+    entry = {"date": str(datetime.now().date()), "followers": followers}
+    if os.path.exists(history_file):
+        with open(history_file, 'r+') as f:
+            history = json.load(f)
+            history.append(entry)
+            f.seek(0)
+            json.dump(history, f, indent=2)
+    else:
+        with open(history_file, 'w') as f:
+            json.dump([entry], f, indent=2)
 
 # ================= FITUR UTAMA =================
 
@@ -110,6 +143,7 @@ def info_dashboard():
         try:
             my_id = active_client.user_id
             info = active_client.user_info_v1(my_id)
+            save_followers_history(info.follower_count)  # Untuk analytics
 
             show_header()
             console.print(f"\n[bold yellow]👤 DASHBOARD AKUN: @{info.username}[/bold yellow]\n")
@@ -179,13 +213,14 @@ def feature_auto_like():
             progress.update(task_id, description="Liking...", total=len(medias))
 
             for media in medias:
+                if not check_daily_limit('like'):
+                    break
                 try:
                     time.sleep(random.uniform(2, 5))
                     active_client.media_like(media.id)
                     sukses += 1
                     progress.update(task_id, advance=1, ok=sukses)
                     time.sleep(random.uniform(3, 8))
-
                 except Exception as e:
                     gagal += 1
                     if "feedback_required" in str(e).lower():
@@ -230,6 +265,8 @@ def feature_auto_follow():
             progress.update(task, description="Following...", total=len(followers))
 
             for uid in followers:
+                if not check_daily_limit('follow'):
+                    break
                 try:
                     active_client.user_follow(uid)
                     sukses += 1
@@ -269,6 +306,8 @@ def feature_auto_unfollow():
             progress.update(task, description="Unfollowing...", total=len(following))
 
             for uid in following:
+                if not check_daily_limit('follow'):  # Unfollow hitung sebagai follow action
+                    break
                 try:
                     active_client.user_unfollow(uid)
                     sukses += 1
@@ -286,10 +325,15 @@ def feature_auto_unfollow():
     questionary.press_any_key_to_continue().ask()
 
 def feature_auto_comment():
-    """Auto comment massal mirip auto like"""
+    """Auto comment massal mirip auto like, pakai hashtag generator"""
     if not active_client: return
 
     console.print("\n[bold cyan]💬 AUTO COMMENT MANAGER[/bold cyan]")
+    keyword = questionary.text("Keyword untuk generate hashtag (opsional, enter skip):").ask()
+    if keyword:
+        hashtags = ' '.join(hashtag_gen.generate_hashtags(keyword, 3))  # Integrasi fitur baru
+    else:
+        hashtags = ''
     hashtag = questionary.text("Target Hashtag (tanpa #):").ask()
     if not hashtag: return
 
@@ -323,8 +367,10 @@ def feature_auto_comment():
             progress.update(task_id, description="Commenting...", total=len(medias))
 
             for media in medias:
+                if not check_daily_limit('reply'):  # Comment hitung sebagai reply
+                    break
                 try:
-                    comment_text = random.choice(comments).strip()
+                    comment_text = random.choice(comments).strip() + ' ' + hashtags
                     time.sleep(random.uniform(2, 5))
                     active_client.media_comment(media.id, comment_text)
                     sukses += 1
@@ -392,10 +438,15 @@ def feature_auto_story_viewer():
     questionary.press_any_key_to_continue().ask()
 
 def feature_auto_dm():
-    """Fitur baru: Auto DM massal (kirim pesan ke follower/target dengan variasi, delay mirip manusia)"""
+    """Auto DM massal (kirim pesan ke follower/target dengan variasi, delay mirip manusia, pakai hashtag)"""
     if not active_client: return
 
     console.print("\n[bold cyan]📩 AUTO DM MANAGER[/bold cyan]")
+    keyword = questionary.text("Keyword untuk generate hashtag di DM (opsional):").ask()
+    if keyword:
+        hashtags = ' ' + ' '.join(hashtag_gen.generate_hashtags(keyword, 2))
+    else:
+        hashtags = ''
     target = questionary.text("Username Target (Kirim DM ke follower dia):").ask()
     if not target: return
     limit = int(questionary.text("Jumlah DM:", default="10").ask())
@@ -423,8 +474,10 @@ def feature_auto_dm():
             progress.update(task_id, description="Sending DM...", total=len(followers))
 
             for user_id in followers:
+                if not check_daily_limit('dm'):
+                    break
                 try:
-                    msg_text = random.choice(messages).strip()
+                    msg_text = random.choice(messages).strip() + hashtags
                     time.sleep(random.uniform(5, 12))  # Delay mirip manusia
                     active_client.direct_send(msg_text, [user_id])
                     sukses += 1
@@ -451,7 +504,7 @@ def feature_auto_dm():
     questionary.press_any_key_to_continue().ask()
 
 def feature_auto_reply_comments():
-    """Fitur baru: Auto reply comments (monitor recent comments dan reply otomatis dengan variasi, background)"""
+    """Auto reply comments (monitor recent comments dan reply otomatis dengan variasi, background, limiter)"""
     global reply_thread
     
     if not active_client: return
@@ -475,12 +528,14 @@ def feature_auto_reply_comments():
                     for comment in comments:
                         if last_comment_id and comment.pk <= last_comment_id:
                             continue
+                        if not check_daily_limit('reply'):
+                            break
                         reply_text = random.choice(replies).strip()
                         time.sleep(random.uniform(2, 5))  # Delay mirip manusia
                         active_client.comment_reply(media.id, comment.pk, reply_text)
                         send_telegram_log(f"📩 Replied to comment: {reply_text}")
                 if comments:
-                    last_comment_id = comments[0].pk
+                    last_comment_id = comments[0].pk if comments else None
                 time.sleep(interval)
             except Exception as e:
                 console.print(f"[red]Auto reply error: {e}. Restart fitur.[/red]")
@@ -510,6 +565,7 @@ def feature_monitor_followers():
         try:
             info = active_client.user_info(active_client.user_id)
             last_follower_count = info.follower_count
+            save_followers_history(last_follower_count)  # Untuk analytics
             console.print(f"[green]Monitoring dimulai. Followers awal: {last_follower_count:,}[/green]")
             
             while True:
@@ -523,6 +579,7 @@ def feature_monitor_followers():
                     send_telegram_log(msg)
                     console.print(f"[yellow]{msg}[/yellow]")
                     last_follower_count = current_count
+                    save_followers_history(current_count)
         except Exception as e:
             console.print(f"[red]Monitoring error: {e}. Restart fitur.[/red]")
 
@@ -534,7 +591,7 @@ def feature_monitor_followers():
     questionary.press_any_key_to_continue().ask()
 
 def feature_scheduled_post():
-    """Scheduled post simple: Set jadwal via menu, run background tanpa cron"""
+    """Scheduled post simple: Set jadwal via menu, run background tanpa cron, tambah auto story post"""
     global scheduler_thread
     
     if not active_client: return
@@ -544,13 +601,16 @@ def feature_scheduled_post():
         return
 
     console.print("\n[bold cyan]📅 SCHEDULED POST MANAGER[/bold cyan]")
-    console.print("[dim]Set jadwal post otomatis (foto random dari folder 'photos', caption random).[/dim]")
+    console.print("[dim]Set jadwal post otomatis (pilih feed/story, foto random dari 'photos', caption + hashtag random).[/dim]")
 
+    post_type = questionary.select("Tipe post:", choices=["Feed Photo", "Story Photo"]).ask()
     photo_dir = "photos"  # Folder foto
     if not os.path.exists(photo_dir):
         os.makedirs(photo_dir)
         console.print("[yellow]Folder 'photos' dibuat. Tambah foto JPG/PNG di sana.[/yellow]")
 
+    keyword = questionary.text("Keyword untuk generate hashtag (opsional):").ask()
+    hashtags = ' ' + ' '.join(hashtag_gen.generate_hashtags(keyword, 3)) if keyword else ''
     captions = questionary.text("Daftar caption (pisah koma):", default="Hello world!,Good day,Insta post").ask().split(',')
     interval = questionary.select(
         "Jadwal post:",
@@ -574,9 +634,12 @@ def feature_scheduled_post():
                 send_telegram_log("❌ No photos in folder for scheduled post!")
                 return
             photo_path = os.path.join(photo_dir, random.choice(photos))
-            caption = random.choice(captions).strip()
-            active_client.photo_upload(photo_path, caption=caption)
-            msg = f"📸 **SCHEDULED POST SUKSES**\nAkun: {current_user_data['username']}\nCaption: {caption}"
+            caption = random.choice(captions).strip() + hashtags
+            if post_type == "Feed Photo":
+                active_client.photo_upload(photo_path, caption=caption)
+            else:  # Story
+                active_client.photo_upload_to_story(photo_path, caption=caption)
+            msg = f"📸 **SCHEDULED POST SUKSES** ({post_type})\nAkun: {current_user_data['username']}\nCaption: {caption}"
             send_telegram_log(msg)
             console.print(f"[green]{msg}[/green]")
         except Exception as e:
@@ -593,6 +656,50 @@ def feature_scheduled_post():
     scheduler_thread.start()
     
     console.print("[green]Scheduled post dimulai di background! Cek Telegram untuk notif.[/green]")
+    questionary.press_any_key_to_continue().ask()
+
+def feature_analytics():
+    """Fitur baru: Analytics dashboard dengan rich table dan simple chart followers growth"""
+    if not active_client: return
+
+    console.print("\n[bold cyan]📈 ANALYTICS DASHBOARD[/bold cyan]")
+    history_file = "followers_history.json"
+    if not os.path.exists(history_file):
+        console.print("[yellow]Belum ada data history! Jalankan monitor dulu.[/yellow]")
+        return
+
+    with open(history_file, 'r') as f:
+        history = json.load(f)
+
+    # Table rich
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Date", style="cyan")
+    table.add_column("Followers", style="white bold")
+
+    dates = []
+    followers = []
+    for entry in history[-10:]:  # Last 10 untuk simple
+        table.add_row(entry['date'], str(entry['followers']))
+        dates.append(entry['date'])
+        followers.append(entry['followers'])
+
+    console.print(table)
+
+    # Simple chart via matplotlib (text based kalau Termux, atau plot kalau laptop)
+    try:
+        plt.plot(dates, followers)
+        plt.xlabel('Date')
+        plt.ylabel('Followers')
+        plt.title('Followers Growth')
+        plt.xticks(rotation=45)
+        plt.savefig('growth_chart.png')
+        console.print("[green]Chart disimpan ke growth_chart.png! Buka untuk lihat.[/green]")
+    except:
+        # Fallback text chart kalau error
+        console.print("[dim]Simple Text Chart:[/dim]")
+        for d, f in zip(dates, followers):
+            console.print(f"{d}: {'*' * (f // 100)} ({f})")
+
     questionary.press_any_key_to_continue().ask()
 
 # ================= LOGIN SYSTEM =================
@@ -656,7 +763,7 @@ def login_menu():
             questionary.press_any_key_to_continue().ask()
 
 def switch_account():
-    """Fitur baru: Multi-account switcher (switch akun tanpa logout full, reload session)"""
+    """Multi-account switcher (switch akun tanpa logout full, reload session)"""
     global active_client, current_user_data
 
     if not active_client:
@@ -701,12 +808,13 @@ def main():
                 "👥 Auto Follow",
                 "👤 Auto Unfollow",
                 "💬 Auto Comment",
-                "📩 Auto DM",  # Fitur baru
+                "📩 Auto DM",
                 "📸 Auto Story Viewer",
-                "💬 Auto Reply Comments",  # Fitur baru
+                "💬 Auto Reply Comments",
                 "📅 Scheduled Post",
                 "📊 Monitor Followers (Real-time)",
-                "🔄 Switch Akun",  # Fitur baru
+                "📈 Analytics Dashboard",  # Fitur baru
+                "🔄 Switch Akun",
                 "🚪 Logout / Ganti Akun",
                 "❌ Keluar Aplikasi"
             ]
@@ -746,6 +854,8 @@ def main():
             feature_scheduled_post()
         elif choice == "📊 Monitor Followers (Real-time)":
             feature_monitor_followers()
+        elif choice == "📈 Analytics Dashboard":
+            feature_analytics()
         elif choice == "🔄 Switch Akun":
             switch_account()
         elif choice == "🚪 Logout / Ganti Akun":
