@@ -66,9 +66,10 @@ monitoring_thread = None
 last_follower_count = None
 scheduler_thread = None
 reply_thread = None
-action_counters = {'like': 0, 'follow': 0, 'dm': 0, 'reply': 0}  # Fitur limiter harian
+action_counters = {'like': 0, 'follow': 0, 'dm': 0, 'reply': 0, 'scrape': 0, 'block': 0}  # Fitur limiter harian, tambah scrape/block
 last_reset_date = datetime.now().date()  # Reset daily
-daily_limits = {'like': 100, 'follow': 50, 'dm': 30, 'reply': 50}  # Configurable
+daily_limits = {'like': 100, 'follow': 50, 'dm': 30, 'reply': 50, 'scrape': 200, 'block': 20}  # Configurable, tambah scrape/block
+clients = {}  # Dict untuk multi-thread akun
 
 # ================= HELPER FUNCTIONS =================
 def clear():
@@ -98,7 +99,7 @@ def show_header():
     grid.add_column(justify="center", ratio=1)
     grid.add_row(
         Panel(
-            "[bold cyan]🔥 INSTAGRAM SAAS DASHBOARD v5.0[/bold cyan]\n"
+            "[bold cyan]🔥 INSTAGRAM SAAS DASHBOARD v6.0[/bold cyan]\n"
             "[white]Control Center • Device Faker • Smart Automation[/white]",
             style="bold blue",
             subtitle="Created by Lu Sendiri"
@@ -111,12 +112,12 @@ def check_daily_limit(action_type):
     global action_counters, last_reset_date
     today = datetime.now().date()
     if today > last_reset_date:
-        action_counters = {'like': 0, 'follow': 0, 'dm': 0, 'reply': 0}
+        action_counters = {'like': 0, 'follow': 0, 'dm': 0, 'reply': 0, 'scrape': 0, 'block': 0}
         last_reset_date = today
-    if action_counters[action_type] >= daily_limits[action_type]:
+    if action_counters.get(action_type, 0) >= daily_limits.get(action_type, 0):
         console.print(f"[red]⚠️ Limit harian {action_type} tercapai! Tunggu besok.[/red]")
         return False
-    action_counters[action_type] += 1
+    action_counters[action_type] = action_counters.get(action_type, 0) + 1
     return True
 
 def save_followers_history(followers: int):
@@ -306,7 +307,7 @@ def feature_auto_unfollow():
             progress.update(task, description="Unfollowing...", total=len(following))
 
             for uid in following:
-                if not check_daily_limit('follow'):  # Unfollow hitung sebagai follow action
+                if not check_daily_limit('follow'):
                     break
                 try:
                     active_client.user_unfollow(uid)
@@ -504,7 +505,7 @@ def feature_auto_dm():
     questionary.press_any_key_to_continue().ask()
 
 def feature_auto_reply_comments():
-    """Auto reply comments (monitor recent comments dan reply otomatis dengan variasi, background, limiter)"""
+    """Auto reply comments (monitor recent comments dan reply otomatis dengan variasi, background, tambah block/report spam)"""
     global reply_thread
     
     if not active_client: return
@@ -516,6 +517,7 @@ def feature_auto_reply_comments():
     console.print("\n[bold cyan]💬 AUTO REPLY COMMENTS[/bold cyan]")
     interval = int(questionary.text("Interval cek comments (detik):", default="300").ask())
     replies = questionary.text("Daftar reply (pisah koma):", default="Thanks!,Appreciate it,Great comment!").ask().split(',')
+    spam_keywords = ['buy', 'free', 'win', 'promo', 'viagra', 'spam']  # Simple detect spam
 
     def reply_loop():
         last_comment_id = None
@@ -528,12 +530,19 @@ def feature_auto_reply_comments():
                     for comment in comments:
                         if last_comment_id and comment.pk <= last_comment_id:
                             continue
-                        if not check_daily_limit('reply'):
-                            break
-                        reply_text = random.choice(replies).strip()
-                        time.sleep(random.uniform(2, 5))  # Delay mirip manusia
-                        active_client.comment_reply(media.id, comment.pk, reply_text)
-                        send_telegram_log(f"📩 Replied to comment: {reply_text}")
+                        is_spam = any(kw in comment.text.lower() for kw in spam_keywords)
+                        if is_spam:
+                            if check_daily_limit('block'):
+                                active_client.user_block(comment.user.pk)
+                                active_client.comment_report(comment.pk)
+                                send_telegram_log(f"🚫 Blocked/Reported spam user: @{comment.user.username}")
+                        else:
+                            if not check_daily_limit('reply'):
+                                break
+                            reply_text = random.choice(replies).strip()
+                            time.sleep(random.uniform(2, 5))  # Delay mirip manusia
+                            active_client.comment_reply(media.id, comment.pk, reply_text)
+                            send_telegram_log(f"📩 Replied to comment: {reply_text}")
                 if comments:
                     last_comment_id = comments[0].pk if comments else None
                 time.sleep(interval)
@@ -580,6 +589,7 @@ def feature_monitor_followers():
                     console.print(f"[yellow]{msg}[/yellow]")
                     last_follower_count = current_count
                     save_followers_history(current_count)
+                time.sleep(interval)
         except Exception as e:
             console.print(f"[red]Monitoring error: {e}. Restart fitur.[/red]")
 
@@ -659,7 +669,7 @@ def feature_scheduled_post():
     questionary.press_any_key_to_continue().ask()
 
 def feature_analytics():
-    """Fitur baru: Analytics dashboard dengan rich table dan simple chart followers growth"""
+    """Analytics dashboard dengan rich table dan simple chart followers growth"""
     if not active_client: return
 
     console.print("\n[bold cyan]📈 ANALYTICS DASHBOARD[/bold cyan]")
@@ -700,6 +710,102 @@ def feature_analytics():
         for d, f in zip(dates, followers):
             console.print(f"{d}: {'*' * (f // 100)} ({f})")
 
+    questionary.press_any_key_to_continue().ask()
+
+def feature_scrape_competitors():
+    """Fitur baru: Auto scrape competitors' followers untuk target auto follow/DM, simpan ke JSON, limiter scrape"""
+    if not active_client: return
+
+    console.print("\n[bold cyan]🔍 AUTO SCRAPE COMPETITORS[/bold cyan]")
+    competitor = questionary.text("Username Competitor untuk scrape followers:").ask()
+    if not competitor: return
+    limit = int(questionary.text("Jumlah Followers untuk scrape:", default="200").ask())
+
+    sukses = 0
+
+    with Progress(
+        SpinnerColumn(), TextColumn("{task.description}"), BarColumn(),
+        TextColumn("{task.completed}/{task.total}"), console=console
+    ) as progress:
+
+        task = progress.add_task(f"Scraping @{competitor}...", total=limit)
+
+        try:
+            competitor_id = active_client.user_id_from_username(competitor)
+            followers = active_client.user_followers(competitor_id, amount=limit)
+
+            scraped = []
+            for uid in followers:
+                if not check_daily_limit('scrape'):
+                    break
+                try:
+                    user_info = active_client.user_info(uid)
+                    scraped.append({'username': user_info.username, 'id': uid})
+                    sukses += 1
+                    progress.advance(task)
+                    time.sleep(random.uniform(1, 3))  # Delay mirip manusia
+                except Exception as e:
+                    pass
+
+            # Simpan ke JSON untuk target follow/DM
+            with open(f"scraped_followers_{competitor}.json", 'w') as f:
+                json.dump(scraped, f, indent=2)
+            console.print(f"[green]Scraped {sukses} followers ke scraped_followers_{competitor}.json![/green]")
+
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+
+    send_telegram_log(f"🔍 Scrape sukses: {sukses} dari @{competitor}")
+    questionary.press_any_key_to_continue().ask()
+
+def feature_run_multi_accounts():
+    """Fitur baru: Multi-threaded action untuk handle banyak akun sekaligus (paralel, misal auto like/follow per akun)"""
+    global clients
+
+    if len(clients) > 0:
+        console.print("[yellow]Multi accounts sudah running! Stop dulu.[/yellow]")
+        return
+
+    console.print("\n[bold cyan]🔄 RUN MULTI ACCOUNTS (Paralel)[/bold cyan]")
+    action = questionary.select("Action untuk run di semua akun:", choices=["Auto Like", "Auto Follow"]).ask()
+
+    acc_manager = AccountManager()
+    accounts = acc_manager.get_all_accounts()
+    lm = LoginManager()
+
+    def run_action(username, password):
+        client, success = lm.login_account(username, password)
+        if success:
+            clients[username] = client
+            if action == "Auto Like":
+                # Call feature_auto_like tapi dengan client ini
+                hashtag = "test"  # Default, bisa custom per akun kalau mau
+                medias = client.hashtag_medias_v1(hashtag, amount=10)
+                for media in medias:
+                    if not check_daily_limit('like'):
+                        break
+                    client.media_like(media.id)
+                    time.sleep(random.uniform(3, 8))
+            elif action == "Auto Follow":
+                target = "testuser"  # Default
+                target_id = client.user_id_from_username(target)
+                followers = client.user_followers(target_id, amount=10)
+                for uid in followers:
+                    if not check_daily_limit('follow'):
+                        break
+                    client.user_follow(uid)
+                    time.sleep(random.uniform(5, 12))
+            send_telegram_log(f"Multi action sukses di @{username}")
+
+    threads = []
+    for acc in accounts:
+        t = threading.Thread(target=run_action, args=(acc['username'], acc_manager.get_password(acc['username'])))
+        t.daemon = True
+        t.start()
+        threads.append(t)
+        time.sleep(random.uniform(1, 3))  # Stagger start biar mirip manusia
+
+    console.print("[green]Multi accounts running paralel! Cek log.[/green]")
     questionary.press_any_key_to_continue().ask()
 
 # ================= LOGIN SYSTEM =================
@@ -813,7 +919,9 @@ def main():
                 "💬 Auto Reply Comments",
                 "📅 Scheduled Post",
                 "📊 Monitor Followers (Real-time)",
-                "📈 Analytics Dashboard",  # Fitur baru
+                "📈 Analytics Dashboard",
+                "🔍 Scrape Competitors",  # Fitur baru
+                "🔄 Run Multi Accounts",  # Fitur baru multi-thread
                 "🔄 Switch Akun",
                 "🚪 Logout / Ganti Akun",
                 "❌ Keluar Aplikasi"
@@ -856,6 +964,10 @@ def main():
             feature_monitor_followers()
         elif choice == "📈 Analytics Dashboard":
             feature_analytics()
+        elif choice == "🔍 Scrape Competitors":
+            feature_scrape_competitors()
+        elif choice == "🔄 Run Multi Accounts":
+            feature_run_multi_accounts()
         elif choice == "🔄 Switch Akun":
             switch_account()
         elif choice == "🚪 Logout / Ganti Akun":
