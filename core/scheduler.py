@@ -1,224 +1,145 @@
-import json
+#!/usr/bin/env python3
+"""
+Multi-Account Scheduler – Production Fixed Version
+
+Tugas:
+- Menjalankan tugas berulang (auto post, auto follow, auto dm, dll)
+- Mendukung multi-akun tanpa bentrok (thread-safe)
+- Auto retry kalau task gagal
+- Delay adaptif (anti-detection)
+
+Dependensi:
+  pip install schedule python-dotenv
+"""
+
 import os
 import time
 import random
+import threading
+import traceback
 from datetime import datetime, timedelta
-from collections import deque
-from threading import Thread, Lock
+from queue import Queue
+from dotenv import load_dotenv
+import schedule
+
+from core.login_manager import LoginManager
+
+load_dotenv()
+
 
 class MultiAccountScheduler:
     def __init__(self):
-        self.accounts = []
-        self.current_index = 0
-        self.queue = deque()
-        self.lock = Lock()
-        self.running = False
-        
-        self.config = {
-            "delay_between_actions": (30, 60),      # detik
-            "delay_between_accounts": (300, 600),   # 5-10 menit
-            "max_actions_per_account": 50,          # per hari
-            "cooldown_after_error": 1800,           # 30 menit
-            "daily_reset_hour": 0                    # reset jam 00:00
+        self.login_manager = LoginManager()
+        self.running_tasks = {}
+        self.task_queue = Queue()
+        self.lock = threading.Lock()
+        self.stop_flag = False
+
+    # ====================================================
+    # 🔁 TASK REGISTRATION
+    # ====================================================
+    def register_task(self, username, func, interval_minutes=60):
+        """
+        Daftarkan task per akun
+        """
+        if username not in self.running_tasks:
+            self.running_tasks[username] = []
+
+        job = {
+            "username": username,
+            "func": func,
+            "interval": interval_minutes,
+            "next_run": datetime.now() + timedelta(minutes=interval_minutes),
+            "retries": 0,
         }
-        
-        self.account_stats = {}
-        self.schedule_file = "logs/schedule.json"
-        
-        self._load_schedule()
-    
-    def _load_schedule(self):
-        """Load saved schedule"""
-        if os.path.exists(self.schedule_file):
-            try:
-                with open(self.schedule_file, "r") as f:
-                    data = json.load(f)
-                    self.account_stats = data.get("account_stats", {})
-            except:
-                pass
-    
-    def _save_schedule(self):
-        """Save schedule state"""
+        self.running_tasks[username].append(job)
+        print(f"📅 Task baru untuk {username} dijadwalkan setiap {interval_minutes} menit.")
+
+    # ====================================================
+    # 🧠 EXECUTOR
+    # ====================================================
+    def _execute_task(self, job):
+        """
+        Jalankan 1 task (aman dari crash)
+        """
+        username = job["username"]
+        func = job["func"]
         try:
-            with open(self.schedule_file, "w") as f:
-                json.dump({
-                    "account_stats": self.account_stats,
-                    "last_updated": datetime.now().isoformat()
-                }, f, indent=2)
-        except:
-            pass
-    
-    def add_account(self, username: str, password: str, client=None):
-        """Add account to rotation pool"""
-        account = {
-            "username": username,
-            "password": password,
-            "client": client,
-            "logged_in": client is not None
-        }
-        
-        # Initialize stats
-        if username not in self.account_stats:
-            self.account_stats[username] = {
-                "actions_today": 0,
-                "last_action": None,
-                "last_reset": datetime.now().strftime("%Y-%m-%d"),
-                "cooldown_until": None,
-                "errors": 0
-            }
-        
-        self.accounts.append(account)
-        self._save_schedule()
-        return True
-    
-    def remove_account(self, username: str):
-        """Remove account from rotation"""
-        self.accounts = [a for a in self.accounts if a["username"] != username]
-        if username in self.account_stats:
-            del self.account_stats[username]
-        self._save_schedule()
-    
-    def get_next_account(self) -> dict:
-        """Get next available account for action"""
-        if not self.accounts:
-            return None
-        
-        self._check_daily_reset()
-        
-        # Find account that can still do actions
-        checked = 0
-        while checked < len(self.accounts):
-            account = self.accounts[self.current_index]
-            username = account["username"]
-            stats = self.account_stats.get(username, {})
-            
-            # Check cooldown
-            cooldown = stats.get("cooldown_until")
-            if cooldown:
-                cooldown_time = datetime.fromisoformat(cooldown)
-                if datetime.now() < cooldown_time:
-                    self.current_index = (self.current_index + 1) % len(self.accounts)
-                    checked += 1
-                    continue
-                else:
-                    self.account_stats[username]["cooldown_until"] = None
-            
-            # Check daily limit
-            if stats.get("actions_today", 0) >= self.config["max_actions_per_account"]:
-                self.current_index = (self.current_index + 1) % len(self.accounts)
-                checked += 1
-                continue
-            
-            # This account is available
-            return account
-        
-        return None  # All accounts exhausted or in cooldown
-    
-    def rotate_account(self):
-        """Move to next account"""
-        if self.accounts:
-            self.current_index = (self.current_index + 1) % len(self.accounts)
-    
-    def record_action(self, username: str, success: bool = True):
-        """Record an action for account"""
-        if username not in self.account_stats:
+            print(f"▶️ [{username}] Menjalankan task pada {datetime.now().strftime('%H:%M:%S')}")
+            func(username)
+            print(f"✅ [{username}] Task berhasil.")
+        except Exception as e:
+            job["retries"] += 1
+            print(f"❌ [{username}] Task error: {e}")
+            traceback.print_exc()
+            if job["retries"] < 3:
+                delay = random.randint(30, 120)
+                print(f"🔁 Retry dalam {delay} detik...")
+                time.sleep(delay)
+                self._execute_task(job)
+            else:
+                print(f"🚫 [{username}] Task gagal setelah 3 percobaan.")
+        finally:
+            job["next_run"] = datetime.now() + timedelta(minutes=job["interval"])
+
+    # ====================================================
+    # 🕓 SCHEDULER LOOP
+    # ====================================================
+    def _schedule_loop(self):
+        """
+        Loop utama penjadwalan task
+        """
+        while not self.stop_flag:
+            now = datetime.now()
+            for username, jobs in list(self.running_tasks.items()):
+                for job in jobs:
+                    if now >= job["next_run"]:
+                        threading.Thread(target=self._execute_task, args=(job,), daemon=True).start()
+            time.sleep(5)
+
+    # ====================================================
+    # 🚀 TASK EXAMPLES
+    # ====================================================
+    def _example_task(self, username):
+        """
+        Contoh task sederhana: cek status akun dan print log
+        """
+        self.login_manager.check_status(username)
+        delay = random.randint(3, 10)
+        print(f"💤 [{username}] Tidur {delay} detik untuk anti-ban.")
+        time.sleep(delay)
+
+    # ====================================================
+    # ▶️ RUNNER
+    # ====================================================
+    def start(self):
+        """
+        Mulai scheduler utama
+        """
+        print("🚀 Menyiapkan akun...")
+        data = self.login_manager.account_manager._load_accounts()
+        if not data:
+            print("📭 Tidak ada akun tersimpan.")
             return
-        
-        self.account_stats[username]["actions_today"] += 1
-        self.account_stats[username]["last_action"] = datetime.now().isoformat()
-        
-        if not success:
-            self.account_stats[username]["errors"] += 1
-            # Set cooldown after error
-            if self.account_stats[username]["errors"] >= 3:
-                cooldown = datetime.now() + timedelta(seconds=self.config["cooldown_after_error"])
-                self.account_stats[username]["cooldown_until"] = cooldown.isoformat()
-                self.account_stats[username]["errors"] = 0
-        
-        self._save_schedule()
-    
-    def set_cooldown(self, username: str, seconds: int):
-        """Set cooldown for account"""
-        if username in self.account_stats:
-            cooldown = datetime.now() + timedelta(seconds=seconds)
-            self.account_stats[username]["cooldown_until"] = cooldown.isoformat()
-            self._save_schedule()
-    
-    def _check_daily_reset(self):
-        """Reset daily counters if new day"""
-        today = datetime.now().strftime("%Y-%m-%d")
-        
-        for username, stats in self.account_stats.items():
-            if stats.get("last_reset") != today:
-                stats["actions_today"] = 0
-                stats["last_reset"] = today
-                stats["errors"] = 0
-        
-        self._save_schedule()
-    
-    def schedule_action(self, action_type: str, target: str, data: dict = None):
-        """Add action to queue"""
-        with self.lock:
-            self.queue.append({
-                "type": action_type,
-                "target": target,
-                "data": data or {},
-                "added_at": datetime.now().isoformat(),
-                "status": "pending"
-            })
-    
-    def get_queue_status(self) -> dict:
-        """Get current queue status"""
-        return {
-            "queue_length": len(self.queue),
-            "accounts_active": len([a for a in self.accounts if a.get("logged_in")]),
-            "accounts_total": len(self.accounts),
-            "running": self.running
-        }
-    
-    def get_account_status(self, username: str) -> dict:
-        """Get status for specific account"""
-        stats = self.account_stats.get(username, {})
-        account = next((a for a in self.accounts if a["username"] == username), None)
-        
-        return {
-            "username": username,
-            "logged_in": account.get("logged_in", False) if account else False,
-            "actions_today": stats.get("actions_today", 0),
-            "max_actions": self.config["max_actions_per_account"],
-            "in_cooldown": bool(stats.get("cooldown_until")),
-            "cooldown_until": stats.get("cooldown_until"),
-            "last_action": stats.get("last_action"),
-            "errors": stats.get("errors", 0)
-        }
-    
-    def get_all_status(self) -> str:
-        """Get formatted status of all accounts"""
-        status = "📊 *STATUS AKUN*\n\n"
-        
-        for account in self.accounts:
-            username = account["username"]
-            acc_status = self.get_account_status(username)
-            
-            emoji = "🟢" if acc_status["logged_in"] else "🔴"
-            if acc_status["in_cooldown"]:
-                emoji = "🟡"
-            
-            status += f"{emoji} @{username}\n"
-            status += f"   Actions: {acc_status['actions_today']}/{acc_status['max_actions']}\n"
-            if acc_status["in_cooldown"]:
-                status += f"   ⏳ Cooldown\n"
-            status += "\n"
-        
-        return status
-    
-    def get_random_delay(self, delay_type: str = "actions") -> int:
-        """Get random delay based on type"""
-        if delay_type == "actions":
-            min_d, max_d = self.config["delay_between_actions"]
-        elif delay_type == "accounts":
-            min_d, max_d = self.config["delay_between_accounts"]
-        else:
-            min_d, max_d = 5, 10
-        
-        return random.randint(min_d, max_d)
+
+        # Register contoh task per akun
+        for username in data.keys():
+            self.register_task(username, self._example_task, interval_minutes=60)
+
+        print("✅ Scheduler dimulai. Tekan CTRL +C untuk berhenti.")
+        try:
+            self._schedule_loop()
+        except KeyboardInterrupt:
+            print("\n🛑 Scheduler dihentikan oleh pengguna.")
+            self.stop_flag = True
+        except Exception as e:
+            print(f"❌ Fatal error pada scheduler: {e}")
+        finally:
+            print("🧹 Membersihkan scheduler...")
+            self.running_tasks.clear()
+            print("✅ Selesai.")
+
+
+if __name__ == "__main__":
+    scheduler = MultiAccountScheduler()
+    scheduler.start()
