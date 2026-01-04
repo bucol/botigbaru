@@ -1,192 +1,170 @@
-import json
+#!/usr/bin/env python3
+"""
+Login Manager - Production Fixed Version
+
+Tugas:
+- Login dan manajemen akun (multi account)
+- Integrasi dengan SessionManagerV2 dan VerificationHandler
+- Handle expired session, challenge, dan rate limit
+- Kompatibel untuk Termux & Windows
+
+Dependensi:
+  pip install instagrapi python-dotenv
+"""
+
 import os
 import time
 import random
-import requests  # Tambahan untuk check proxy
-import csv  # Tambahan untuk export CSV
 from datetime import datetime
-from typing import Tuple, Optional
-import shutil  # Buat backup file
-
+from dotenv import load_dotenv
 from instagrapi import Client
 from instagrapi.exceptions import (
-    BadPassword, ReloginAttemptExceeded, ChallengeRequired,
-    SelectContactPointRecoveryForm, RecaptchaChallengeForm,
-    FeedbackRequired, LoginRequired
+    LoginRequired,
+    ChallengeRequired,
+    TwoFactorRequired,
+    PleaseWaitFewMinutes,
 )
 
-from core.device_identity_generator import DeviceIdentityGenerator
-from core.session_manager import SessionManager
+# local imports
+from core.session_manager_v2 import SessionManagerV2
+from core.verification_handler import VerificationHandler
+from core.account_manager import AccountManager
+
+load_dotenv()
+
 
 class LoginManager:
     def __init__(self):
-        self.device_gen = DeviceIdentityGenerator()
-        self.session_mgr = SessionManager()
-        self.proxy_list = []  # List proxy untuk rotator (isi dari .env atau file)
-        self._load_proxies()
+        self.session_manager = SessionManagerV2()
+        self.verifier = VerificationHandler()
+        self.account_manager = AccountManager()
+        self.max_retries = 3
 
-    def _load_proxies(self):
-        """Load proxy dari .env atau file proxies.txt"""
-        proxies = os.getenv('PROXIES', '').split(',')
-        if os.path.exists('proxies.txt'):
-            with open('proxies.txt', 'r') as f:
-                proxies.extend([line.strip() for line in f if line.strip()])
-        self.proxy_list = [p for p in proxies if p]
-        if self.proxy_list:
-            print(f"Loaded {len(self.proxy_list)} proxies for rotator.")
-
-    def _get_live_proxy(self):
-        """Ambil proxy live random, check dengan requests"""
-        if not self.proxy_list:
-            return None
-        random.shuffle(self.proxy_list)
-        for proxy in self.proxy_list:
+    # ====================================================
+    # 🔑 LOGIN PER AKUN
+    # ====================================================
+    def login(self, username: str, password: str) -> Client | None:
+        """
+        Login satu akun dengan full handler
+        """
+        client = self.session_manager.load_session(username)
+        if client:
+            print(f"✅ Session ditemukan untuk {username}")
             try:
-                requests.get("https://www.google.com", proxies={"http": proxy, "https": proxy}, timeout=5)
-                return proxy
-            except:
-                pass
-        print("No live proxy found. Using direct connection.")
+                client.get_timeline_feed()
+                print(f"✅ Session {username} masih aktif.")
+                return client
+            except LoginRequired:
+                print(f"⚠️ Session expired untuk {username}. Relogin...")
+            except Exception as e:
+                print(f"⚠️ Error saat cek session {username}: {e}")
+
+        for attempt in range(self.max_retries):
+            try:
+                print(f"🔑 Login attempt {attempt+1}/{self.max_retries} untuk {username}")
+                client = Client()
+                client.login(username, password)
+                print(f"✅ Login sukses untuk {username}")
+                self.session_manager.save_session(client, username)
+                return client
+
+            except TwoFactorRequired:
+                print(f"🔐 TwoFactorRequired untuk {username}")
+                client = self.verifier.handle_two_factor(client, username, password)
+                if client:
+                    self.session_manager.save_session(client, username)
+                    return client
+
+            except ChallengeRequired:
+                print(f"⚠️ ChallengeRequired untuk {username}")
+                client = self.verifier.handle_challenge(client, username)
+                if client:
+                    self.session_manager.save_session(client, username)
+                    return client
+
+            except PleaseWaitFewMinutes:
+                delay = random.randint(60, 180)
+                print(f"⏳ Rate limited. Menunggu {delay}s sebelum coba lagi...")
+                time.sleep(delay)
+
+            except Exception as e:
+                print(f"❌ Gagal login {username}: {e}")
+                time.sleep(random.randint(5, 15))
+
+        print(f"❌ Semua percobaan login gagal untuk {username}")
         return None
 
-    def login_account(self, username: str, password: str) -> Tuple[Optional[Client], bool]:
-        """Login dengan device faker, proxy rotator, dan challenge handler, plus auto backup"""
-        client = Client()
-        client.delay_range = [1, 3]  # Anti-ban delay
-
-        # Set proxy rotator
-        proxy = self._get_live_proxy()
-        if proxy:
-            client.set_proxy(proxy)
-            print(f"Using proxy: {proxy}")
-
-        # Generate device identity
-        device = self.device_gen.generate_device_identity()
-        client.set_device(device)
-
-        # Coba load session dulu
-        if self.session_mgr.load_session(client, username):
-            try:
-                client.get_timeline_feed()  # Verify session
-                self._log_event(username, "Session loaded successfully")
-                return client, True
-            except LoginRequired:
-                print("Session invalid, re-logging...")
-
-        # Login manual jika session gagal
-        try:
-            client.login(username, password)
-            self.session_mgr.save_session(client)
-            self._backup_session(username)  # Auto backup setelah sukses
-            self._log_event(username, "Login successful")
-            return client, True
-
-        except ChallengeRequired:
-            return self._handle_challenge(client, username, password)
-
-        except BadPassword:
-            self._log_event(username, "Bad password")
-            return None, False
-
-        except ReloginAttemptExceeded:
-            self._log_event(username, "Relogin attempt exceeded")
-            return None, False
-
-        except FeedbackRequired:
-            self._log_event(username, "Feedback required")
-            return None, False
-
-        except Exception as e:
-            self._log_event(username, f"Login error: {str(e)}")
-            return None, False
-
-    def _handle_challenge(self, client: Client, username: str, password: str) -> Tuple[Optional[Client], bool]:
-        """Handle challenge dengan rotator proxy jika gagal"""
-        print("\n[CHALLENGE] Akun memerlukan verifikasi!")
-        try:
-            api_path = client.last_json.get("challenge", {}).get("api_path")
-            if not api_path:
-                return None, False
-
-            choices = client.challenge_code_handler(username, lambda: print("Pilih metode: 0=SMS, 1=Email"))
-            choice = input("Pilih metode (0/1): ")
-
-            client.challenge_code_handler(username, choice)
-            code = input("Masukkan kode verifikasi: ")
-
-            client.challenge_code_handler(username, code)
-
-            client.login(username, password)
-            self.session_mgr.save_session(client)
-            self._backup_session(username)  # Auto backup
-            self._log_event(username, "Challenge resolved")
-            return client, True
-
-        except SelectContactPointRecoveryForm:
-            print("[CHALLENGE] Select contact point")
-            # Logic serupa, rotator proxy jika gagal
-            proxy = self._get_live_proxy()
-            if proxy:
-                client.set_proxy(proxy)
-            # ... (lanjutkan logic handle)
-
-        except RecaptchaChallengeForm:
-            print("[CHALLENGE] Recaptcha required. Silakan login manual dulu.")
-            return None, False
-
-        except Exception as e:
-            self._log_event(username, f"Challenge error: {str(e)}")
-            return None, False
-
-    def _log_event(self, username: str, message: str):
-        """Log event ke file"""
-        log_entry = {
-            "timestamp": str(datetime.now()),
-            "username": username,
-            "event": message
-        }
-        log_file = "login_logs.json"
-        if os.path.exists(log_file):
-            with open(log_file, 'r+') as f:
-                logs = json.load(f)
-                logs.append(log_entry)
-                f.seek(0)
-                json.dump(logs, f, indent=2)
-        else:
-            with open(log_file, 'w') as f:
-                json.dump([log_entry], f, indent=2)
-
-    def export_logs_to_csv(self, csv_file="login_logs.csv"):
-        """Export logs JSON ke CSV"""
-        log_file = "login_logs.json"
-        if not os.path.exists(log_file):
-            print("No logs to export!")
+    # ====================================================
+    # 🔁 LOGIN SEMUA AKUN
+    # ====================================================
+    def login_all_accounts(self):
+        """
+        Loop semua akun dari AccountManager
+        """
+        data = self.account_manager._load_accounts()
+        if not data:
+            print("📭 Tidak ada akun tersimpan.")
             return
-        with open(log_file, 'r') as f:
-            logs = json.load(f)
-        with open(csv_file, 'w', newline='') as cf:
-            writer = csv.writer(cf)
-            writer.writerow(['timestamp', 'username', 'event'])  # Header
-            for log in logs:
-                writer.writerow([log['timestamp'], log['username'], log['event']])
-        print(f"Logs exported to {csv_file}")
 
-    def _backup_session(self, username: str):
-        """Fitur baru: Backup session otomatis ke folder backups/ dengan timestamp"""
-        session_file = f"sessions/{username}.json"  # Asumsi dari session_manager
-        if os.path.exists(session_file):
-            backup_dir = "backups"
-            if not os.path.exists(backup_dir):
-                os.makedirs(backup_dir)
-            backup_file = os.path.join(backup_dir, f"{username}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
-            shutil.copy(session_file, backup_file)
-            print(f"Session backed up to {backup_file}")
+        for username in data:
+            password = self.account_manager.get_account_password(username)
+            print(f"\n👤 Login akun: {username}")
+            client = self.login(username, password)
+            if client:
+                print(f"✅ {username} aktif & tersambung.\n")
+                self.session_manager.validate_session(username)
+            else:
+                print(f"❌ Gagal login akun {username}.\n")
 
-    def restore_session(self, username: str, backup_file: str):
-        """Fitur baru: Restore session dari backup"""
-        session_file = f"sessions/{username}.json"
-        if os.path.exists(backup_file):
-            shutil.copy(backup_file, session_file)
-            print(f"Session restored from {backup_file}")
+    # ====================================================
+    # 🧹 LOGOUT & RESET SESSION
+    # ====================================================
+    def logout_account(self, username: str):
+        path = self.session_manager._get_session_path(username)
+        if os.path.exists(path):
+            os.remove(path)
+            print(f"🧹 Session {username} dihapus.")
         else:
-            print("Backup file not found!")
+            print(f"⚠️ Session {username} tidak ditemukan.")
+
+    def logout_all(self):
+        data = self.account_manager._load_accounts()
+        for username in data:
+            self.logout_account(username)
+        print("✅ Semua session dihapus.")
+
+    # ====================================================
+    # 🧠 UTILITIES
+    # ====================================================
+    def check_status(self, username: str):
+        """
+        Periksa status session akun tertentu
+        """
+        active = self.session_manager.validate_session(username)
+        if active:
+            print(f"✅ {username} masih aktif.")
+        else:
+            print(f"⚠️ {username} butuh login ulang.")
+
+
+if __name__ == "__main__":
+    manager = LoginManager()
+    print("\n=== Login Manager CLI ===")
+    while True:
+        print("\n1️⃣ Login semua akun\n2️⃣ Cek status akun\n3️⃣ Hapus session\n4️⃣ Hapus semua session\n0️⃣ Keluar")
+        choice = input("Pilih opsi: ").strip()
+        if choice == "1":
+            manager.login_all_accounts()
+        elif choice == "2":
+            user = input("Username: ").strip()
+            manager.check_status(user)
+        elif choice == "3":
+            user = input("Username: ").strip()
+            manager.logout_account(user)
+        elif choice == "4":
+            manager.logout_all()
+        elif choice == "0":
+            print("👋 Keluar dari Login Manager.")
+            break
+        else:
+            print("❌ Pilihan tidak valid.")
