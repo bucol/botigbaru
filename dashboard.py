@@ -1,281 +1,303 @@
-import sys
+#!/usr/bin/env python3
+"""
+Dashboard CLI - Final Remastered Version
+Fitur:
+- Login Select Mode (Anti-Typo)
+- Rich UI + Indo Number Format
+- Integrated with Core
+"""
+
 import os
+import sys
 import time
-import random
-import threading
 import json
 from datetime import datetime
 
-# Import Library UI
+# Library UI Modern (Wajib install: pip install rich questionary)
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
+from rich.layout import Layout
 from rich.align import Align
+from rich.text import Text
 from rich import print as rprint
 import questionary
-import telebot
 
-# =================================================================
-# ✅ TOKEN SIAP PAKAI (TESTING MODE)
-# =================================================================
-
-TELEGRAM_TOKEN   = '8013913254:AAEgPHrPD2_qzr2K0mtphdQlG5C-rZfth28'
-TELEGRAM_CHAT_ID = '551845725'
-
-# =================================================================
-
-# --- INTEGRASI CORE ---
-sys.path.append(os.getcwd())
-
+# Import core modules
+# Pastikan struktur folder lu bener (ada folder 'core' dan 'data')
 try:
-    from core.account_manager import AccountManager
     from core.login_manager import LoginManager
-except ImportError:
-    pass
+    from core.account_manager import AccountManager
+    from core.scheduler import MultiAccountScheduler
+    from core.analytics import Analytics
+except ImportError as e:
+    print(f"❌ Error Import: {e}")
+    print("Pastikan folder 'core' ada di lokasi yang sama.")
+    sys.exit()
 
-# Inisialisasi
-console = Console()
-bot_tele = telebot.TeleBot(TELEGRAM_TOKEN)
+class DashboardController:
+    def __init__(self):
+        # Init Module Core
+        self.account_manager = AccountManager()
+        self.login_manager = LoginManager()
+        self.scheduler = MultiAccountScheduler()
+        self.analytics = Analytics()
+        
+        self.username = None
+        self.client = None
+        self.console = Console()
 
-# Global Variables
-active_client = None
-current_user_data = None
+    # =====================================================
+    # 🎨 HELPER UI
+    # =====================================================
+    def _clear_screen(self):
+        os.system("cls" if os.name == "nt" else "clear")
 
-# ================= HELPER FUNCTIONS =================
-def clear():
-    os.system('cls' if os.name == 'nt' else 'clear')
-
-def format_indo(angka):
-    """
-    Mengubah format angka bule (10,000) jadi Indo (10.000)
-    Dan memastikan inputnya dianggap angka.
-    """
-    try:
-        # Pakai f-string separator koma, lalu replace koma jadi titik
-        return f"{int(angka):,}".replace(",", ".")
-    except:
-        return str(angka)
-
-def send_telegram_log(message):
-    def _send():
+    def _format_indo(self, value):
+        """Ubah 10000 jadi 10.000 (Bold Cyan)"""
         try:
-            timestamp = datetime.now().strftime("%H:%M")
-            formatted_msg = f"🤖 **BOT REPORT** [{timestamp}]\n\n{message}"
-            bot_tele.send_message(TELEGRAM_CHAT_ID, formatted_msg)
-        except: pass
-    t = threading.Thread(target=_send)
-    t.daemon = True
-    t.start()
+            val_fmt = f"{int(value):,}".replace(",", ".")
+            return f"[bold cyan]{val_fmt}[/bold cyan]"
+        except:
+            return str(value)
 
-def show_header():
-    clear()
-    console.print(
-        Panel(
-            Align.center(
-                "[bold cyan]🔥 INSTAGRAM COMMAND CENTER 🔥[/bold cyan]\n"
-                "[dim]V6.0 • Indo Format • Premium UI[/dim]"
-            ),
-            style="bold blue",
-            border_style="blue"
+    def _banner(self):
+        self._clear_screen()
+        grid = Table.grid(expand=True)
+        grid.add_column(justify="center", ratio=1)
+        grid.add_row(
+            Panel(
+                Align.center(
+                    "[bold cyan]🌐 BUCOL INSTAGRAM BOT[/bold cyan]\n"
+                    "[dim]v3.0 • Smart Login • Rich UI[/dim]"
+                ),
+                style="bold blue",
+                border_style="blue",
+            )
         )
-    )
+        self.console.print(grid)
 
-# ================= FITUR UTAMA =================
+    def _pause(self):
+        self.console.input("\n[dim]Tekan [bold white]Enter[/bold white] untuk kembali...[/dim]")
 
-def info_dashboard():
-    if not active_client: return
-    with console.status("[bold green]Mengambil data akun...[/bold green]"):
-        try:
-            my_id = active_client.user_id
-            info = active_client.user_info_v1(my_id)
-            show_header()
-            
-            # --- TABEL DENGAN FORMAT ANGKA INDO & FONT KEREN ---
-            table = Table(title=f"PROFIL: @{info.username}", title_style="bold yellow", expand=True)
-            
-            # Kolom Metrik
-            table.add_column("METRIK", justify="right", style="white", no_wrap=True)
-            # Kolom Nilai (Kita kasih style BOLD CYAN biar ganteng)
-            table.add_column("NILAI", style="bold cyan") 
-            
-            table.add_row("Nama Lengkap", f"[white]{info.full_name}[/white]")
-            # Disini kita panggil format_indo
-            table.add_row("Followers", format_indo(info.follower_count))
-            table.add_row("Following", format_indo(info.following_count))
-            table.add_row("Total Post", format_indo(info.media_count))
-            
-            console.print(table)
-            
-            # Info Device
-            dev = active_client.device_settings
-            dev_info = f"📱 Device: [white]{dev['model']}[/white] | 🆔 Android ID: [white]{active_client.android_device_id[:16]}...[/white]"
-            console.print(Panel(dev_info, title="Security Layer", style="green"))
-            
-            questionary.press_any_key_to_continue().ask()
-        except Exception as e:
-            console.print(f"[bold red]❌ Gagal: {e}[/bold red]")
-            questionary.press_any_key_to_continue().ask()
+    def _loading(self, text="Memproses"):
+        with self.console.status(f"[bold green]{text}...[/bold green]", spinner="dots"):
+            time.sleep(1.0)
 
-def feature_auto_like():
-    if not active_client: return
-    console.print("\n[bold cyan]❤️ AUTO LIKE ENGINE[/bold cyan]")
-    hashtag = questionary.text("Target Hashtag (tanpa #):").ask()
-    if not hashtag: return
-    limit = int(questionary.text("Jumlah Like:", default="10").ask())
-    
-    sukses, gagal = 0, 0
-    with Progress(
-        SpinnerColumn(), TextColumn("[bold blue]{task.description}"),
-        BarColumn(bar_width=None, style="dim", complete_style="green"),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), console=console
-    ) as progress:
-        task_id = progress.add_task("Mencari Target...", total=limit)
-        try:
-            medias = active_client.hashtag_medias_v1(hashtag, amount=limit, tab_key="recent")
-            if not medias:
-                progress.update(task_id, description="[yellow]Mode Top Posts...[/yellow]")
-                medias = active_client.hashtag_medias_v1(hashtag, amount=limit, tab_key="top")
-            
-            if not medias:
-                console.print("[red]❌ Zonk! Tidak ada postingan.[/red]")
-                time.sleep(2)
-                return
-
-            progress.update(task_id, description="Processing...", total=len(medias))
-            for media in medias:
-                try:
-                    time.sleep(random.uniform(2, 4))
-                    active_client.media_like(media.id)
-                    sukses += 1
-                    progress.console.print(f"   ✅ Liked: [white]{media.code}[/white]")
-                    progress.advance(task_id)
-                    time.sleep(random.uniform(3, 7))
-                except Exception as e:
-                    gagal += 1
-                    if "feedback_required" in str(e).lower():
-                        progress.console.print("[bold red]⚠️ SOFTBAN DETECTED![/bold red]")
-                        break
-        except Exception as e:
-            console.print(f"[red]Error: {e}[/red]")
-            
-    report = f"✅ **AUTO LIKE SELESAI**\nUser: {current_user_data['username']}\nTarget: #{hashtag}\nSukses: {sukses} | Gagal: {gagal}"
-    send_telegram_log(report)
-    console.print(Panel(f"Sukses: {sukses} | Gagal: {gagal}", title="Hasil", style="green"))
-    questionary.press_any_key_to_continue().ask()
-
-def feature_auto_follow():
-    if not active_client: return
-    console.print("\n[bold cyan]👥 AUTO FOLLOW ENGINE[/bold cyan]")
-    target = questionary.text("Target Username:").ask()
-    if not target: return
-    limit = int(questionary.text("Jumlah Follow:", default="10").ask())
-    sukses = 0
-    with Progress(SpinnerColumn(), TextColumn("{task.description}"), BarColumn(), console=console) as progress:
-        task = progress.add_task("Scraping...", total=limit)
-        try:
-            target_id = active_client.user_id_from_username(target)
-            followers = active_client.user_followers(target_id, amount=limit)
-            progress.update(task, description="Following...", total=len(followers))
-            for uid in followers:
-                try:
-                    active_client.user_follow(uid)
-                    sukses += 1
-                    progress.console.print(f"   ➕ Followed: {uid}")
-                    progress.advance(task)
-                    time.sleep(random.uniform(4, 9))
-                except: pass
-        except Exception as e:
-            console.print(f"[red]Error: {e}[/red]")
-    send_telegram_log(f"✅ **AUTO FOLLOW SELESAI**\nUser: {current_user_data['username']}\nTarget: @{target}\nSukses: {sukses}")
-    questionary.press_any_key_to_continue().ask()
-
-# ================= LOGIN SYSTEM =================
-
-def login_menu():
-    global active_client, current_user_data
-    show_header()
-    
-    try:
-        acc_manager = AccountManager()
-        accounts = acc_manager.get_all_accounts()
-    except:
-        console.print("[red]❌ Gagal memuat database akun![/red]")
-        return
-
-    # --- LOGIC TAMBAH AKUN (PASTI MUNCUL) ---
-    choices = []
-    if accounts:
-        choices = [f"{acc['username']}" for acc in accounts]
-    
-    # Menu Tambah Akun SELALU di paling atas
-    choices.insert(0, "➕ Tambah Akun Baru") 
-    choices.append("❌ Kembali")
-    
-    choice = questionary.select("Pilih Akun:", choices=choices).ask()
-    
-    if choice == "❌ Kembali": 
-        return
+    # =====================================================
+    # 🔑 AUTHENTICATION (SELECT MODE)
+    # =====================================================
+    def login_menu(self):
+        self._banner()
+        self.console.print(Panel("[bold green]🔐 LOGIN AREA[/bold green]", expand=False))
         
-    elif choice == "➕ Tambah Akun Baru":
-        console.print("\n[bold yellow]📝 INPUT DATA AKUN BARU[/bold yellow]")
-        new_user = questionary.text("Username Instagram:").ask()
-        new_pass = questionary.password("Password Instagram:").ask()
+        # 1. BACA DATABASE MANUAL (Biar akurat buat list menu)
+        db_path = os.path.join("data", "accounts.json")
+        accounts = []
         
-        if new_user and new_pass:
-            acc_manager.add_account(new_user, new_pass)
-            console.print(f"[bold green]✅ Akun {new_user} berhasil disimpan![/bold green]")
-            time.sleep(1)
-            login_menu() # Refresh menu biar akunnya muncul
-        return
+        if os.path.exists(db_path):
+            try:
+                with open(db_path, 'r') as f:
+                    content = f.read().strip()
+                    if content: accounts = json.loads(content)
+            except: pass
 
-    # Login Process
-    selected_acc = next((a for a in accounts if a['username'] == choice), None)
-    if not selected_acc: return
-    
-    current_user_data = selected_acc
-    lm = LoginManager()
-    
-    with console.status(f"[bold green]Login @{choice}...[/bold green]"):
+        # 2. CEK KALAU KOSONG
+        if not accounts:
+            self.console.print("\n[bold yellow]⚠️  DATABASE AKUN KOSONG![/bold yellow]")
+            self.console.print("Silakan ke menu [cyan]👤 Kelola Database Akun[/cyan] dulu.")
+            self._pause()
+            return
+
+        # 3. TAMPILKAN PILIHAN
+        choices = [acc['username'] for acc in accounts]
+        choices.append("❌ Kembali")
+
+        selected_user = questionary.select(
+            "Pilih Akun:",
+            choices=choices,
+            style=questionary.Style([('qmark', 'fg:#673ab7 bold'), ('pointer', 'fg:#673ab7 bold')])
+        ).ask()
+
+        if selected_user == "❌ Kembali": return
+
+        # 4. AMBIL PASSWORD OTOMATIS
+        target_acc = next((a for a in accounts if a['username'] == selected_user), None)
+        if not target_acc: return # Safety check
+        password = target_acc['password']
+
+        # 5. EKSEKUSI LOGIN
+        self._loading(f"Login ke @{selected_user}")
+        
         try:
-            client, success = lm.login_account(selected_acc['username'], selected_acc['password'])
-            if success:
-                active_client = client
-                send_telegram_log(f"🔓 **LOGIN SUKSES**\nUser: {choice}\nDevice: {client.device_settings['model']}")
+            # Panggil logic core
+            result = self.login_manager.login(selected_user, password)
+            
+            # Handle return format dari core (bisa object atau tuple)
+            if isinstance(result, tuple) and len(result) >= 1:
+                is_success = result[0]
+                self.client = result[2] if len(result) > 2 else result
             else:
-                console.print("[red]❌ Password Salah / Kena Checkpoint[/red]")
-                questionary.press_any_key_to_continue().ask()
+                is_success = True if result else False
+                self.client = result
+
+            if is_success:
+                self.username = selected_user
+                self.console.print(f"\n[bold green]✅ Login Berhasil![/bold green] Welcome [cyan]@{selected_user}[/cyan]")
+                
+                # Cek info device
+                if hasattr(self.client, 'device_settings'):
+                    dev = self.client.device_settings.get('model', 'Unknown Device')
+                    self.console.print(f"[dim]📱 Connected via {dev}[/dim]")
+            else:
+                self.console.print(f"\n[bold red]❌ Gagal Login.[/bold red] Cek password/checkpoint.")
+                
         except Exception as e:
-             console.print(f"[red]❌ Error Login: {e}[/red]")
-             questionary.press_any_key_to_continue().ask()
-
-# ================= MAIN MENU =================
-
-def main():
-    global active_client, current_user_data
-    
-    while True:
-        show_header()
-        
-        if active_client:
-            status = f"[bold green]● ONLINE: @{current_user_data['username']}[/bold green]"
-            menu = ["👤 Dashboard", "❤️ Auto Like", "👥 Auto Follow", "🚪 Logout", "❌ Exit"]
-        else:
-            status = "[bold red]○ OFFLINE[/bold red]"
-            menu = ["🔐 Login Akun", "❌ Exit"]
+            self.console.print(f"\n[bold red]❌ System Error:[/bold red] {e}")
             
-        console.print(Panel(Align.center(status), style="white"))
+        self._pause()
+
+    # =====================================================
+    # 👤 ACCOUNT MANAGEMENT
+    # =====================================================
+    def account_menu(self):
+        while True:
+            self._banner()
+            
+            choice = questionary.select(
+                "👤 KELOLA AKUN",
+                choices=[
+                    "➕ Tambah Akun Baru",
+                    "🗑️  Hapus Akun",
+                    "📋 Lihat Daftar Akun",
+                    "❌ Kembali"
+                ]
+            ).ask()
+
+            if choice == "❌ Kembali": break
+
+            if choice == "➕ Tambah Akun Baru":
+                self.console.print("[dim]Masukkan data akun baru:[/dim]")
+                u = questionary.text("Username:").ask()
+                p = questionary.password("Password:").ask()
+                n = questionary.text("Catatan (Opsional):").ask()
+                
+                if u and p:
+                    self.account_manager.add_account(u, p, n)
+                    self.console.print(f"[green]✅ Akun {u} berhasil disimpan![/green]")
+                    time.sleep(1)
+            
+            elif choice == "🗑️  Hapus Akun":
+                u = questionary.text("Username yg dihapus:").ask()
+                if u:
+                    self.account_manager.remove_account(u)
+                    self.console.print("[yellow]🗑️  Akun dihapus.[/yellow]")
+                    time.sleep(1)
+
+            elif choice == "📋 Lihat Daftar Akun":
+                print("\n")
+                # Memanggil fungsi list dari core
+                self.account_manager.list_accounts()
+                print("\n")
+                questionary.press_any_key_to_continue().ask()
+
+    # =====================================================
+    # 📅 SCHEDULER
+    # =====================================================
+    def scheduler_menu(self):
+        self._banner()
+        self.console.print(Panel("[cyan]📅 MULTI-ACCOUNT SCHEDULER[/cyan]", expand=False))
+        self.console.print("Scheduler akan menjalankan auto task setiap interval.\n")
         
-        choice = questionary.select("MENU UTAMA", choices=menu).ask()
+        confirm = questionary.confirm("Mulai Scheduler sekarang?").ask()
         
-        if choice == "🔐 Login Akun": login_menu()
-        elif choice == "👤 Dashboard": info_dashboard()
-        elif choice == "❤️ Auto Like": feature_auto_like()
-        elif choice == "👥 Auto Follow": feature_auto_follow()
-        elif choice == "🚪 Logout": 
-            active_client = None
-            current_user_data = None
-        elif choice == "❌ Exit": break
+        if confirm:
+            self._loading("Menyiapkan Scheduler")
+            try:
+                self.scheduler.start()
+            except KeyboardInterrupt:
+                self.console.print("\n[yellow]⏸️  Scheduler dihentikan.[/yellow]")
+        else:
+            self.console.print("[yellow]Dibatalkan.[/yellow]")
+        self._pause()
+
+    # =====================================================
+    # 📊 ANALYTICS
+    # =====================================================
+    def analytics_menu(self):
+        while True:
+            self._banner()
+            choice = questionary.select(
+                "📊 ANALYTICS MENU",
+                choices=["📝 Input Data Harian", "📈 Tampilkan Laporan", "❌ Kembali"]
+            ).ask()
+
+            if choice == "❌ Kembali": break
+
+            if choice == "📝 Input Data Harian":
+                u = questionary.text("Username:").ask()
+                if not u: continue
+                
+                # Validasi angka biar gak error
+                f = int(questionary.text("Followers:", validate=lambda x: x.isdigit()).ask())
+                g = int(questionary.text("Following:", validate=lambda x: x.isdigit()).ask())
+                p = int(questionary.text("Total Post:", validate=lambda x: x.isdigit()).ask())
+                l = int(questionary.text("Likes (Hari ini):", validate=lambda x: x.isdigit()).ask())
+                c = int(questionary.text("Comments (Hari ini):", validate=lambda x: x.isdigit()).ask())
+
+                self.console.print(f"\n[bold]Preview:[/bold] Followers {self._format_indo(f)} | Likes {self._format_indo(l)}")
+                
+                self.analytics.record_daily_stats(u, f, g, p, l, c)
+                self.console.print("[green]✅ Data direkam![/green]")
+                self._pause()
+
+            elif choice == "📈 Tampilkan Laporan":
+                u = questionary.text("Username target:").ask()
+                self.console.print(Panel(f"📊 LAPORAN: @{u}", style="cyan"))
+                print("\n")
+                self.analytics.print_report(u)
+                print("\n")
+                self._pause()
+
+    # =====================================================
+    # ⚙️ MAIN MENU
+    # =====================================================
+    def main_menu(self):
+        while True:
+            self._banner()
+            
+            # Status Bar Ganteng
+            status_text = f"● ONLINE: @{self.username}" if self.username else "○ OFFLINE"
+            status_color = "green" if self.username else "red"
+            self.console.print(Align.center(f"[{status_color}]{status_text}[/{status_color}]"))
+            self.console.print("")
+
+            choice = questionary.select(
+                "MENU UTAMA",
+                choices=[
+                    "🔐 Login Akun",
+                    "👤 Kelola Database Akun",
+                    "📅 Jalankan Scheduler",
+                    "📊 Menu Analytics",
+                    "❌ Keluar"
+                ]
+            ).ask()
+
+            if choice == "🔐 Login Akun":
+                self.login_menu()
+            elif choice == "👤 Kelola Database Akun":
+                self.account_menu()
+            elif choice == "📅 Jalankan Scheduler":
+                self.scheduler_menu()
+            elif choice == "📊 Menu Analytics":
+                self.analytics_menu()
+            elif choice == "❌ Keluar":
+                self.console.print("[bold]Bye bye! 👋[/bold]")
+                break
 
 if __name__ == "__main__":
-    main()
+    try:
+        app = DashboardController()
+        app.main_menu()
+    except KeyboardInterrupt:
+        print("\nForce Close.")
