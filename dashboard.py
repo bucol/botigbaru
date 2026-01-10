@@ -17,11 +17,11 @@ import questionary
 import telebot
 
 # =================================================================
-# ⚠️⚠️⚠️ CONFIG TELEGRAM (ISI ULANG PUNYA LU DISINI) ⚠️⚠️⚠️
+# ✅✅✅ TOKEN SUDAH TERISI OTOMATIS (SESUAI REQUEST) ✅✅✅
 # =================================================================
 
-TELEGRAM_TOKEN   = '8013913254:AAEgPHrPD2_qzr2K0mtphdQlG5C-rZfth28'   # <--- PASTE TOKEN DISINI
-TELEGRAM_CHAT_ID = '551845725' # <--- PASTE ID DISINI
+TELEGRAM_TOKEN   = '8013913254:AAEgPHrPD2_qzr2K0mtphdQlG5C-rZfth28'
+TELEGRAM_CHAT_ID = '551845725'
 
 # =================================================================
 
@@ -36,12 +36,6 @@ except ImportError:
 
 # Inisialisasi
 console = Console()
-# Cek token sederhana
-if 'MASUKKAN_TOKEN' in TELEGRAM_TOKEN:
-    console.print("[bold red]❌ ERROR: TOKEN BELUM DIISI![/bold red]")
-    console.print("Edit baris 20 di file dashboard.py dulu bos.")
-    sys.exit()
-
 bot_tele = telebot.TeleBot(TELEGRAM_TOKEN)
 
 # Global Variables
@@ -75,7 +69,7 @@ def show_header():
         Panel(
             Align.center(
                 "[bold cyan]🔥 INSTAGRAM COMMAND CENTER 🔥[/bold cyan]\n"
-                "[dim]V4.0 • Auto Add Account • Fix Login[/dim]"
+                "[dim]V5.0 • Tokens Ready • Auto Add Account[/dim]"
             ),
             style="bold blue",
             border_style="blue"
@@ -195,12 +189,13 @@ def login_menu():
         console.print("[red]❌ Gagal memuat database akun![/red]")
         return
 
-    # --- FITUR BARU: AUTO ADD ACCOUNT ---
+    # --- LOGIC TAMBAH AKUN (PASTI MUNCUL) ---
     choices = []
     if accounts:
         choices = [f"{acc['username']}" for acc in accounts]
     
-    choices.insert(0, "➕ Tambah Akun Baru") # Menu baru
+    # Menu Tambah Akun SELALU di paling atas
+    choices.insert(0, "➕ Tambah Akun Baru") 
     choices.append("❌ Kembali")
     
     choice = questionary.select("Pilih Akun:", choices=choices).ask()
@@ -243,7 +238,8 @@ def login_menu():
 # ================= MAIN MENU =================
 
 def main():
-    global active_client, current_user_data # FIX UNBOUND LOCAL ERROR
+    # FIX: Deklarasi global harus di awal fungsi
+    global active_client, current_user_data 
     
     while True:
         show_header()
