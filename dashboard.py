@@ -6,40 +6,42 @@ import threading
 import json
 from datetime import datetime
 
-# Import Library UI Keren
+# Import Library
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
-from rich.layout import Layout
-from rich.live import Live
 from rich.align import Align
 from rich import print as rprint
 import questionary
-
-# Import Telegram
 import telebot
 
-# --- INTEGRASI DENGAN KODE CORE LU ---
+# =================================================================
+# ⚠️⚠️⚠️ CONFIG TELEGRAM (ISI ULANG PUNYA LU DISINI) ⚠️⚠️⚠️
+# =================================================================
+
+TELEGRAM_TOKEN   = '8013913254:AAEgPHrPD2_qzr2K0mtphdQlG5C-rZfth28'   # <--- PASTE TOKEN DISINI
+TELEGRAM_CHAT_ID = '551845725' # <--- PASTE ID DISINI
+
+# =================================================================
+
+# --- INTEGRASI CORE ---
 sys.path.append(os.getcwd())
 
 try:
     from core.account_manager import AccountManager
     from core.login_manager import LoginManager
-    from instagrapi.exceptions import (
-        BadPassword, TwoFactorRequired, ChallengeRequired, 
-        FeedbackRequired, LoginRequired
-    )
 except ImportError:
-    # Fallback kalau dijalankan tanpa core yg lengkap
     pass
-
-# ================= KONFIGURASI =================
-TELEGRAM_TOKEN = 'MASUKKAN_TOKEN_BOT_LU_DISINI'
-TELEGRAM_CHAT_ID = 'MASUKKAN_ID_TELEGRAM_LU_DISINI'
 
 # Inisialisasi
 console = Console()
+# Cek token sederhana
+if 'MASUKKAN_TOKEN' in TELEGRAM_TOKEN:
+    console.print("[bold red]❌ ERROR: TOKEN BELUM DIISI![/bold red]")
+    console.print("Edit baris 20 di file dashboard.py dulu bos.")
+    sys.exit()
+
 bot_tele = telebot.TeleBot(TELEGRAM_TOKEN)
 
 # Global Variables
@@ -51,18 +53,16 @@ def clear():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def format_indo(angka):
-    """Mengubah 10000 jadi 10.000 (Format Indo)"""
     try:
         return f"{int(angka):,}".replace(",", ".")
     except:
         return str(angka)
 
 def send_telegram_log(message):
-    """Kirim log ke telegram tanpa bikin bot macet"""
     def _send():
         try:
             timestamp = datetime.now().strftime("%H:%M")
-            formatted_msg = f"🤖 **BOT LAPORAN** [{timestamp}]\n\n{message}"
+            formatted_msg = f"🤖 **BOT REPORT** [{timestamp}]\n\n{message}"
             bot_tele.send_message(TELEGRAM_CHAT_ID, formatted_msg)
         except: pass
     t = threading.Thread(target=_send)
@@ -75,7 +75,7 @@ def show_header():
         Panel(
             Align.center(
                 "[bold cyan]🔥 INSTAGRAM COMMAND CENTER 🔥[/bold cyan]\n"
-                "[dim]V3.0 • Pure Python • Device Spoofing[/dim]"
+                "[dim]V4.0 • Auto Add Account • Fix Login[/dim]"
             ),
             style="bold blue",
             border_style="blue"
@@ -86,58 +86,43 @@ def show_header():
 
 def info_dashboard():
     if not active_client: return
-    
     with console.status("[bold green]Mengambil data akun...[/bold green]"):
         try:
             my_id = active_client.user_id
             info = active_client.user_info_v1(my_id)
-            
             show_header()
             
-            # Tabel Utama
             table = Table(title=f"PROFIL: @{info.username}", title_style="bold yellow", expand=True)
             table.add_column("METRIK", justify="right", style="cyan", no_wrap=True)
             table.add_column("NILAI", style="magenta bold")
-            
             table.add_row("Nama", info.full_name)
             table.add_row("Followers", format_indo(info.follower_count))
             table.add_row("Following", format_indo(info.following_count))
             table.add_row("Total Post", format_indo(info.media_count))
-            table.add_row("Status", "🔒 Private" if info.is_private else "🌍 Public")
             
             console.print(table)
-            
-            # Info Device
             dev = active_client.device_settings
             dev_info = f"📱 Device: [white]{dev['model']}[/white] | 🆔 Android ID: [white]{active_client.android_device_id[:16]}...[/white]"
             console.print(Panel(dev_info, title="Security Layer", style="green"))
-            
             questionary.press_any_key_to_continue().ask()
-            
         except Exception as e:
             console.print(f"[bold red]❌ Gagal: {e}[/bold red]")
             questionary.press_any_key_to_continue().ask()
 
 def feature_auto_like():
     if not active_client: return
-    
     console.print("\n[bold cyan]❤️ AUTO LIKE ENGINE[/bold cyan]")
     hashtag = questionary.text("Target Hashtag (tanpa #):").ask()
     if not hashtag: return
     limit = int(questionary.text("Jumlah Like:", default="10").ask())
     
     sukses, gagal = 0, 0
-    
     with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(bar_width=40, style="dim", complete_style="green"),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        console=console
+        SpinnerColumn(), TextColumn("[bold blue]{task.description}"),
+        BarColumn(bar_width=None, style="dim", complete_style="green"),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), console=console
     ) as progress:
-        
         task_id = progress.add_task("Mencari Target...", total=limit)
-        
         try:
             medias = active_client.hashtag_medias_v1(hashtag, amount=limit, tab_key="recent")
             if not medias:
@@ -150,7 +135,6 @@ def feature_auto_like():
                 return
 
             progress.update(task_id, description="Processing...", total=len(medias))
-            
             for media in medias:
                 try:
                     time.sleep(random.uniform(2, 4))
@@ -178,7 +162,6 @@ def feature_auto_follow():
     target = questionary.text("Target Username:").ask()
     if not target: return
     limit = int(questionary.text("Jumlah Follow:", default="10").ask())
-    
     sukses = 0
     with Progress(SpinnerColumn(), TextColumn("{task.description}"), BarColumn(), console=console) as progress:
         task = progress.add_task("Scraping...", total=limit)
@@ -186,7 +169,6 @@ def feature_auto_follow():
             target_id = active_client.user_id_from_username(target)
             followers = active_client.user_followers(target_id, amount=limit)
             progress.update(task, description="Following...", total=len(followers))
-            
             for uid in followers:
                 try:
                     active_client.user_follow(uid)
@@ -197,7 +179,6 @@ def feature_auto_follow():
                 except: pass
         except Exception as e:
             console.print(f"[red]Error: {e}[/red]")
-
     send_telegram_log(f"✅ **AUTO FOLLOW SELESAI**\nUser: {current_user_data['username']}\nTarget: @{target}\nSukses: {sukses}")
     questionary.press_any_key_to_continue().ask()
 
@@ -214,33 +195,56 @@ def login_menu():
         console.print("[red]❌ Gagal memuat database akun![/red]")
         return
 
-    if not accounts:
-        console.print("[yellow]⚠️ Database kosong. Tambahkan akun di main.py dulu.[/yellow]")
-        questionary.press_any_key_to_continue().ask()
-        return
-
-    choices = [f"{acc['username']}" for acc in accounts]
+    # --- FITUR BARU: AUTO ADD ACCOUNT ---
+    choices = []
+    if accounts:
+        choices = [f"{acc['username']}" for acc in accounts]
+    
+    choices.insert(0, "➕ Tambah Akun Baru") # Menu baru
     choices.append("❌ Kembali")
     
     choice = questionary.select("Pilih Akun:", choices=choices).ask()
-    if choice == "❌ Kembali": return
     
+    if choice == "❌ Kembali": 
+        return
+        
+    elif choice == "➕ Tambah Akun Baru":
+        console.print("\n[bold yellow]📝 INPUT DATA AKUN BARU[/bold yellow]")
+        new_user = questionary.text("Username Instagram:").ask()
+        new_pass = questionary.password("Password Instagram:").ask()
+        
+        if new_user and new_pass:
+            acc_manager.add_account(new_user, new_pass)
+            console.print(f"[bold green]✅ Akun {new_user} berhasil disimpan![/bold green]")
+            time.sleep(1)
+            login_menu() # Refresh menu biar akunnya muncul
+        return
+
+    # Login Process
     selected_acc = next((a for a in accounts if a['username'] == choice), None)
-    current_user_data = selected_acc
+    if not selected_acc: return
     
+    current_user_data = selected_acc
     lm = LoginManager()
+    
     with console.status(f"[bold green]Login @{choice}...[/bold green]"):
-        client, success = lm.login_account(selected_acc['username'], selected_acc['password'])
-        if success:
-            active_client = client
-            send_telegram_log(f"🔓 **LOGIN SUKSES**\nUser: {choice}\nDevice: {client.device_settings['model']}")
-        else:
-            console.print("[red]❌ Gagal Login[/red]")
-            questionary.press_any_key_to_continue().ask()
+        try:
+            client, success = lm.login_account(selected_acc['username'], selected_acc['password'])
+            if success:
+                active_client = client
+                send_telegram_log(f"🔓 **LOGIN SUKSES**\nUser: {choice}\nDevice: {client.device_settings['model']}")
+            else:
+                console.print("[red]❌ Password Salah / Kena Checkpoint[/red]")
+                questionary.press_any_key_to_continue().ask()
+        except Exception as e:
+             console.print(f"[red]❌ Error Login: {e}[/red]")
+             questionary.press_any_key_to_continue().ask()
 
 # ================= MAIN MENU =================
 
 def main():
+    global active_client, current_user_data # FIX UNBOUND LOCAL ERROR
+    
     while True:
         show_header()
         
@@ -259,7 +263,9 @@ def main():
         elif choice == "👤 Dashboard": info_dashboard()
         elif choice == "❤️ Auto Like": feature_auto_like()
         elif choice == "👥 Auto Follow": feature_auto_follow()
-        elif choice == "🚪 Logout": active_client = None
+        elif choice == "🚪 Logout": 
+            active_client = None
+            current_user_data = None
         elif choice == "❌ Exit": break
 
 if __name__ == "__main__":
