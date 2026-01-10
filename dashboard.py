@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Dashboard CLI - V16 (ACTIVITY LOG EDITION)
+Dashboard CLI - V17 (STABLE ANALYTICS FIX)
 Fitur:
+- Fix Analytics Error (Force Mobile API)
 - Activity Logging (.txt recorder)
 - View Log Menu
-- Auto Analytics (Real-time Fetch)
 - Whitelist Manager
 - Auto Unfollow & Search Mode
 - Login Select Mode
@@ -49,21 +49,18 @@ class DashboardController:
         self.client = None
         self.console = Console()
         
-        # Init Data Folders
         if not os.path.exists("data"): os.makedirs("data")
         
-        # Init Whitelist DB
         self.whitelist_path = os.path.join("data", "whitelist.json")
         if not os.path.exists(self.whitelist_path):
             with open(self.whitelist_path, 'w') as f: json.dump([], f)
             
-        # Init Log File (Buat file kosong kalau belum ada)
         self.log_path = os.path.join("data", "activity_log.txt")
         if not os.path.exists(self.log_path):
             with open(self.log_path, 'w') as f: f.write("=== BOT ACTIVITY LOG ===\n")
 
     # =====================================================
-    # 🎨 HELPER UI & LOGGING SYSTEM
+    # 🎨 HELPER UI & LOGGING
     # =====================================================
     def _clear_screen(self):
         os.system("cls" if os.name == "nt" else "clear")
@@ -75,10 +72,8 @@ class DashboardController:
         except: return str(value)
 
     def _log_activity(self, action, details):
-        """Mencatat aktivitas ke file txt"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"[{timestamp}] {action}: {details}"
-        
         try:
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(log_entry + "\n")
@@ -92,7 +87,7 @@ class DashboardController:
             Panel(
                 Align.center(
                     "[bold cyan]🌐 BUCOL INSTAGRAM BOT[/bold cyan]\n"
-                    "[dim]v16.0 • Activity Log Recorder • Monitoring System[/dim]"
+                    "[dim]v17.0 • Analytics Fix (Mobile API) • Stable[/dim]"
                 ),
                 style="bold blue",
                 border_style="blue",
@@ -108,7 +103,7 @@ class DashboardController:
             time.sleep(1.0)
 
     # =====================================================
-    # 📜 MENU VIEW LOG (FITUR BARU)
+    # 📜 MENU VIEW LOG
     # =====================================================
     def view_activity_log(self):
         self._banner()
@@ -119,25 +114,18 @@ class DashboardController:
             try:
                 with open(self.log_path, "r", encoding="utf-8") as f:
                     lines = f.readlines()
-                    # Ambil 20 baris terakhir biar gak kepenuhan
                     last_lines = lines[-20:] if len(lines) > 20 else lines
-                    
                     for line in last_lines:
                         line = line.strip()
                         if not line: continue
-                        
-                        # Warnai output biar enak dibaca
                         if "LIKED" in line: style = "green"
                         elif "FOLLOWED" in line: style = "blue"
                         elif "UNFOLLOWED" in line: style = "red"
                         else: style = "white"
-                        
                         self.console.print(f"[{style}]{line}[/{style}]")
-                    
-                    self.console.print(f"\n[dim]Total Record: {len(lines)} baris. Cek file data/activity_log.txt untuk log lengkap.[/dim]")
+                    self.console.print(f"\n[dim]Total Record: {len(lines)} baris.[/dim]")
             except Exception as e:
                 self.console.print(f"[red]Gagal baca log: {e}[/red]")
-        
         self._pause()
 
     # =====================================================
@@ -156,41 +144,25 @@ class DashboardController:
             self._banner()
             current_list = self.load_whitelist()
             self.console.print(Panel(f"🛡️ WHITELIST (Daftar Kebal Unfollow)\nTotal: [bold green]{len(current_list)} akun[/bold green]", style="cyan"))
-            
-            choice = questionary.select(
-                "MENU WHITELIST",
-                choices=[
-                    "➕ Tambah Username ke Whitelist",
-                    "🗑️  Hapus Username dari Whitelist",
-                    "📋 Lihat Daftar Whitelist",
-                    "❌ Kembali"
-                ]
-            ).ask()
-
+            choice = questionary.select("MENU WHITELIST", choices=["➕ Tambah Username ke Whitelist", "🗑️  Hapus Username dari Whitelist", "📋 Lihat Daftar Whitelist", "❌ Kembali"]).ask()
             if choice == "❌ Kembali": break
-
             if choice == "➕ Tambah Username ke Whitelist":
                 u = questionary.text("Username (tanpa @):").ask()
                 if u:
                     current_list = self.load_whitelist()
                     if u not in current_list:
-                        current_list.append(u)
-                        self.save_whitelist(current_list)
-                        self.console.print(f"[green]✅ @{u} sekarang AMAN dari unfollow![/green]")
-                    else: self.console.print(f"[yellow]⚠️ @{u} sudah ada di whitelist.[/yellow]")
+                        current_list.append(u); self.save_whitelist(current_list)
+                        self.console.print(f"[green]✅ @{u} sekarang AMAN![/green]")
+                    else: self.console.print(f"[yellow]⚠️ @{u} sudah ada.[/yellow]")
                     time.sleep(1.5)
-
             elif choice == "🗑️  Hapus Username dari Whitelist":
                 if not current_list: self.console.print("[red]Whitelist kosong.[/red]"); time.sleep(1); continue
                 u = questionary.select("Pilih akun untuk dihapus:", choices=current_list + ["❌ Batal"]).ask()
                 if u != "❌ Batal":
-                    current_list.remove(u)
-                    self.save_whitelist(current_list)
-                    self.console.print(f"[yellow]🗑️ @{u} dihapus dari perlindungan.[/yellow]")
-                    time.sleep(1.5)
-
+                    current_list.remove(u); self.save_whitelist(current_list)
+                    self.console.print(f"[yellow]🗑️ @{u} dihapus.[/yellow]"); time.sleep(1.5)
             elif choice == "📋 Lihat Daftar Whitelist":
-                if not current_list: self.console.print("[dim]Belum ada akun di whitelist.[/dim]")
+                if not current_list: self.console.print("[dim]Kosong.[/dim]")
                 else:
                     t = Table(title="Daftar Akun Kebal")
                     t.add_column("No", style="dim"); t.add_column("Username", style="green")
@@ -199,7 +171,7 @@ class DashboardController:
                 questionary.press_any_key_to_continue().ask()
 
     # =====================================================
-    # 🤖 FITUR OTOMATISASI (DENGAN LOGGER)
+    # 🤖 FITUR OTOMATISASI
     # =====================================================
     def feature_auto_like(self):
         if not self.client: self.console.print("[red]❌ Login dulu bos![/red]"); return
@@ -208,25 +180,20 @@ class DashboardController:
         if not hashtag: return
         try: limit = int(questionary.text("Jumlah Like:", default="10").ask())
         except: limit = 10
-        
         sukses, gagal = 0, 0
         with Progress(SpinnerColumn(), TextColumn("[bold blue]{task.description}"), BarColumn(), console=self.console) as progress:
             task_id = progress.add_task("Mencari Target...", total=limit)
             try:
                 medias = self.client.hashtag_medias_v1(hashtag, amount=limit, tab_key="recent")
                 if not medias: medias = self.client.hashtag_medias_v1(hashtag, amount=limit, tab_key="top")
-                if not medias: self.console.print("[red]❌ Zonk! Tidak ada postingan.[/red]"); return
-
+                if not medias: self.console.print("[red]❌ Zonk! Kosong.[/red]"); return
                 progress.update(task_id, description="Processing...", total=len(medias))
                 for media in medias:
                     try:
                         time.sleep(random.uniform(3, 6))
                         self.client.media_like(media.id)
                         sukses += 1
-                        
-                        # --- LOGGING ---
                         self._log_activity("LIKED", f"{media.code} (Tag: #{hashtag})")
-                        
                         progress.console.print(f"   ✅ Liked: [dim]{media.code}[/dim]")
                         progress.advance(task_id)
                         time.sleep(random.uniform(3, 8))
@@ -243,7 +210,6 @@ class DashboardController:
         if not target_username: return
         try: limit = int(questionary.text("Jumlah Follow:", default="10").ask())
         except: limit = 10
-        
         sukses = 0
         with Progress(SpinnerColumn(), TextColumn("{task.description}"), BarColumn(), console=self.console) as progress:
             task = progress.add_task("Mencari User...", total=limit)
@@ -257,21 +223,16 @@ class DashboardController:
                         if not self.client.user_following_status(target_user.pk).following:
                             self.console.print(f"[bold red]❌ @{target_username} DIGEMBOK (PRIVATE)![/bold red]"); return
                     except: pass
-
                 progress.update(task, description=f"Scraping followers @{target_username}...")
                 followers = self.client.user_followers(target_user.pk, amount=limit)
                 if not followers: self.console.print("[yellow]⚠️ Follower kosong.[/yellow]"); return
-
                 progress.update(task, description="Following...", total=len(followers))
                 for uid in followers:
                     user_id = uid.pk if hasattr(uid, 'pk') else uid
                     try:
                         self.client.user_follow(user_id)
                         sukses += 1
-                        
-                        # --- LOGGING ---
                         self._log_activity("FOLLOWED", f"ID {user_id} (Src: @{target_username})")
-                        
                         progress.console.print(f"   ➕ Followed ID: {user_id}")
                         progress.advance(task)
                         time.sleep(random.uniform(5, 12)) 
@@ -288,12 +249,10 @@ class DashboardController:
         if mode == "❌ Batal": return
         try: limit = int(questionary.text("Maksimal Unfollow:", default="10").ask())
         except: limit = 10
-
         self.console.print("\n[yellow]⏳ Analisa data & whitelist...[/yellow]")
         whitelist = self.load_whitelist()
         my_id = self.client.user_id
         targets_to_unfollow = []
-
         try:
             following_dict = self.client.user_following(my_id)
             if mode.startswith("2"): candidates = list(following_dict.keys())
@@ -301,24 +260,17 @@ class DashboardController:
                 followers_dict = self.client.user_followers(my_id)
                 not_follback_set = set(following_dict.keys()) - set(followers_dict.keys())
                 candidates = list(not_follback_set)
-            
             safe_count = 0
             for uid in candidates:
                 user_obj = following_dict.get(uid)
                 if user_obj:
                     if user_obj.username in whitelist: safe_count += 1; continue
                     targets_to_unfollow.append(uid)
-
-            self.console.print(f"[bold]Total Kandidat:[/bold] {len(candidates)}")
-            self.console.print(f"[bold green]🛡️ Whitelist Safe:[/bold green] {safe_count}")
-            self.console.print(f"[bold red]💀 Siap Unfollow:[/bold red] {len(targets_to_unfollow)}")
-
+            self.console.print(f"[bold]Kandidat:[/bold] {len(candidates)} | [green]Whitelist:[/green] {safe_count} | [red]Target:[/red] {len(targets_to_unfollow)}")
             if len(targets_to_unfollow) > limit: targets_to_unfollow = targets_to_unfollow[:limit]
             if not targets_to_unfollow: self.console.print("[green]✅ Aman![/green]"); self._pause(); return
-
             confirm = questionary.confirm(f"Lanjut unfollow {len(targets_to_unfollow)} akun?").ask()
             if not confirm: return
-
             sukses = 0
             with Progress(SpinnerColumn(), TextColumn("{task.description}"), BarColumn(), console=self.console) as progress:
                 task = progress.add_task("Unfollowing...", total=len(targets_to_unfollow))
@@ -328,15 +280,11 @@ class DashboardController:
                         uname = user_obj.username if user_obj else str(uid)
                         self.client.user_unfollow(uid)
                         sukses += 1
-                        
-                        # --- LOGGING ---
                         self._log_activity("UNFOLLOWED", f"@{uname}")
-                        
                         progress.console.print(f"   🗑️  Bye @{uname}")
                         progress.advance(task)
                         time.sleep(random.uniform(4, 8))
                     except Exception as e: progress.console.print(f"[red]Gagal: {e}[/red]")
-
             self.console.print(f"\n[green]✅ Selesai! {sukses} akun di-unfollow.[/green]")
         except Exception as e: self.console.print(f"[red]Error: {e}[/red]")
         self._pause()
@@ -353,7 +301,7 @@ class DashboardController:
             elif choice == "🛡️ Kelola Whitelist (Anti-Unfollow)": self.whitelist_menu()
 
     # =====================================================
-    # 📊 ANALYTICS
+    # 📊 ANALYTICS MENU (FIXED V17)
     # =====================================================
     def analytics_menu(self):
         while True:
@@ -362,14 +310,21 @@ class DashboardController:
             if choice == "❌ Kembali": break
             if choice == "🔄 Sync Data Statistik (Auto Fetch)":
                 if not self.client: self.console.print("[red]❌ Login dulu bos![/red]"); self._pause(); continue
-                self.console.print("[yellow]⏳ Fetch data server Instagram...[/yellow]")
+                self.console.print("[yellow]⏳ Mengambil data (Mode: Mobile API V1)...[/yellow]")
                 try:
                     my_id = self.client.user_id
-                    info = self.client.user_info(my_id)
+                    
+                    # --- [FIX UTAMA V17] ---
+                    # Ganti .user_info() jadi .user_info_v1()
+                    # Ini maksa pake private API yang lebih stabil dan gak error "KeyError: data"
+                    info = self.client.user_info_v1(my_id) 
+                    
                     self.console.print(Panel(f"[bold]STATUS (@{info.username})[/bold]\n\n👥 Followers : {self._format_indo(info.follower_count)}\n👤 Following : {self._format_indo(info.following_count)}\n📸 Total Post: {self._format_indo(info.media_count)}", title="Live Data", style="cyan"))
+                    
                     self.analytics.record_daily_stats(info.username, info.follower_count, info.following_count, info.media_count, 0, 0)
-                    self.console.print(f"\n[green]✅ Data tercatat![/green]")
-                except Exception as e: self.console.print(f"[red]Gagal: {e}[/red]")
+                    self.console.print(f"\n[green]✅ Data berhasil dicatat ke laporan harian![/green]")
+                except Exception as e:
+                    self.console.print(f"[red]Gagal fetch data: {e}[/red]")
                 self._pause()
             elif choice == "📈 Tampilkan Laporan":
                 u = questionary.text("Username:").ask()
@@ -426,7 +381,7 @@ class DashboardController:
             status_color = "green" if self.username else "red"
             self.console.print(Align.center(f"[{status_color}]{status_text}[/{status_color}]"))
             self.console.print("")
-            choice = questionary.select("MENU UTAMA", choices=["🔐 Login Akun", "🤖 Fitur Bot (Like/Follow/Unfollow)", "📜 Lihat Activity Log", "👤 Kelola Database Akun", "📊 Menu Analytics", "❌ Keluar"]).ask() # <--- MENU LOG ADA DISINI
+            choice = questionary.select("MENU UTAMA", choices=["🔐 Login Akun", "🤖 Fitur Bot (Like/Follow/Unfollow)", "📜 Lihat Activity Log", "👤 Kelola Database Akun", "📊 Menu Analytics", "❌ Keluar"]).ask()
             if choice == "🔐 Login Akun": self.login_menu()
             elif choice == "🤖 Fitur Bot (Like/Follow/Unfollow)": self.automation_menu()
             elif choice == "📜 Lihat Activity Log": self.view_activity_log()
