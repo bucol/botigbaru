@@ -6,7 +6,7 @@ import threading
 import json
 from datetime import datetime
 
-# Import Library
+# Import Library UI
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -17,7 +17,7 @@ import questionary
 import telebot
 
 # =================================================================
-# ✅✅✅ TOKEN SUDAH TERISI OTOMATIS (SESUAI REQUEST) ✅✅✅
+# ✅ TOKEN SIAP PAKAI (TESTING MODE)
 # =================================================================
 
 TELEGRAM_TOKEN   = '8013913254:AAEgPHrPD2_qzr2K0mtphdQlG5C-rZfth28'
@@ -47,7 +47,12 @@ def clear():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def format_indo(angka):
+    """
+    Mengubah format angka bule (10,000) jadi Indo (10.000)
+    Dan memastikan inputnya dianggap angka.
+    """
     try:
+        # Pakai f-string separator koma, lalu replace koma jadi titik
         return f"{int(angka):,}".replace(",", ".")
     except:
         return str(angka)
@@ -69,7 +74,7 @@ def show_header():
         Panel(
             Align.center(
                 "[bold cyan]🔥 INSTAGRAM COMMAND CENTER 🔥[/bold cyan]\n"
-                "[dim]V5.0 • Tokens Ready • Auto Add Account[/dim]"
+                "[dim]V6.0 • Indo Format • Premium UI[/dim]"
             ),
             style="bold blue",
             border_style="blue"
@@ -86,18 +91,27 @@ def info_dashboard():
             info = active_client.user_info_v1(my_id)
             show_header()
             
+            # --- TABEL DENGAN FORMAT ANGKA INDO & FONT KEREN ---
             table = Table(title=f"PROFIL: @{info.username}", title_style="bold yellow", expand=True)
-            table.add_column("METRIK", justify="right", style="cyan", no_wrap=True)
-            table.add_column("NILAI", style="magenta bold")
-            table.add_row("Nama", info.full_name)
+            
+            # Kolom Metrik
+            table.add_column("METRIK", justify="right", style="white", no_wrap=True)
+            # Kolom Nilai (Kita kasih style BOLD CYAN biar ganteng)
+            table.add_column("NILAI", style="bold cyan") 
+            
+            table.add_row("Nama Lengkap", f"[white]{info.full_name}[/white]")
+            # Disini kita panggil format_indo
             table.add_row("Followers", format_indo(info.follower_count))
             table.add_row("Following", format_indo(info.following_count))
             table.add_row("Total Post", format_indo(info.media_count))
             
             console.print(table)
+            
+            # Info Device
             dev = active_client.device_settings
             dev_info = f"📱 Device: [white]{dev['model']}[/white] | 🆔 Android ID: [white]{active_client.android_device_id[:16]}...[/white]"
             console.print(Panel(dev_info, title="Security Layer", style="green"))
+            
             questionary.press_any_key_to_continue().ask()
         except Exception as e:
             console.print(f"[bold red]❌ Gagal: {e}[/bold red]")
@@ -238,8 +252,7 @@ def login_menu():
 # ================= MAIN MENU =================
 
 def main():
-    # FIX: Deklarasi global harus di awal fungsi
-    global active_client, current_user_data 
+    global active_client, current_user_data
     
     while True:
         show_header()
