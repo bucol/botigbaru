@@ -503,4 +503,13 @@ Selamat datang! Gunakan menu di bawah atau command berikut:
         self.application.add_handler(CommandHandler("stats", self.stats))
         self.application.add_handler(CommandHandler("accounts", self.accounts))
         self.application.add_handler(CommandHandler("like", self.like_command))
-        self.application.add_handler(CommandHandler("follow", se
+        self.application.add_handler(CommandHandler("follow", self.follow_command))
+        self.application.add_handler(CommandHandler("comment", self.comment_command))
+        self.application.add_handler(CommandHandler("unfollow", self.unfollow_command))
+        self.application.add_handler(CommandHandler("scrape", self.scrape_command))
+        self.application.add_handler(CommandHandler("pause", self.pause_command))
+        self.application.add_handler(CommandHandler("resume", self.resume_command))
+        self.application.add_handler(CallbackQueryHandler(self.button_callback))
+        
+        self.is_running = True
+        self.application.run_polling()
