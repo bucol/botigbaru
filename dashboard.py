@@ -1,192 +1,266 @@
-#!/usr/bin/env python3
-"""
-Dashboard CLI - Production Fixed Version
-
-Tugas:
-- Antarmuka utama CLI untuk semua fitur bot Instagram
-- Integrasi dengan core modules (login, scheduler, analytics)
-- Aman untuk Termux & Windows
-"""
-
-import os
 import sys
+import os
 import time
+import random
+import threading
+import json
 from datetime import datetime
-from colorama import Fore, Style, init
 
-# Import core modules
-from core.login_manager import LoginManager
-from core.account_manager import AccountManager
-from core.scheduler import MultiAccountScheduler
-from core.analytics import Analytics
+# Import Library UI Keren
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
+from rich.layout import Layout
+from rich.live import Live
+from rich.align import Align
+from rich import print as rprint
+import questionary
 
-init(autoreset=True)
+# Import Telegram
+import telebot
 
+# --- INTEGRASI DENGAN KODE CORE LU ---
+sys.path.append(os.getcwd())
 
-class DashboardController:
-    def __init__(self):
-        self.account_manager = AccountManager()
-        self.login_manager = LoginManager()
-        self.scheduler = MultiAccountScheduler()
-        self.analytics = Analytics()
-        self.username = None
-        self.client = None
+try:
+    from core.account_manager import AccountManager
+    from core.login_manager import LoginManager
+    from instagrapi.exceptions import (
+        BadPassword, TwoFactorRequired, ChallengeRequired, 
+        FeedbackRequired, LoginRequired
+    )
+except ImportError:
+    # Fallback kalau dijalankan tanpa core yg lengkap
+    pass
 
-    # =====================================================
-    # 🧩 UI COMPONENTS
-    # =====================================================
-    def _clear_screen(self):
-        os.system("cls" if os.name == "nt" else "clear")
+# ================= KONFIGURASI =================
+TELEGRAM_TOKEN = 'MASUKKAN_TOKEN_BOT_LU_DISINI'
+TELEGRAM_CHAT_ID = 'MASUKKAN_ID_TELEGRAM_LU_DISINI'
 
-    def _banner(self):
-        print(Fore.CYAN + Style.BRIGHT + "\n==============================")
-        print(Fore.CYAN + "    🌐 BUCOL INSTAGRAM BOT")
-        print(Fore.CYAN + "==============================\n" + Style.RESET_ALL)
+# Inisialisasi
+console = Console()
+bot_tele = telebot.TeleBot(TELEGRAM_TOKEN)
 
-    def _pause(self):
-        input(Fore.YELLOW + "\nTekan Enter untuk kembali ke menu..." + Style.RESET_ALL)
+# Global Variables
+active_client = None
+current_user_data = None
 
-    def _loading(self, text="Memproses"):
-        print(Fore.MAGENTA + f"{text}", end="", flush=True)
-        for _ in range(3):
-            time.sleep(0.5)
-            print(".", end="", flush=True)
-        print(Style.RESET_ALL)
+# ================= HELPER FUNCTIONS =================
+def clear():
+    os.system('cls' if os.name == 'nt' else 'clear')
 
-    # =====================================================
-    # 🔑 AUTHENTICATION
-    # =====================================================
-    def login_menu(self):
-        self._clear_screen()
-        self._banner()
-        print(Fore.GREEN + "🔐 LOGIN MENU" + Style.RESET_ALL)
-        username = input("Masukkan username: ").strip()
-        if not username:
-            print("❌ Username tidak boleh kosong.")
-            return
-        password = input("Masukkan password: ").strip()
-        if not password:
-            print("❌ Password tidak boleh kosong.")
-            return
-        self._loading("Login")
-        self.client = self.login_manager.login(username, password)
-        if self.client:
-            self.username = username
-            print(Fore.GREEN + f"✅ Login berhasil sebagai {username}")
+def format_indo(angka):
+    """Mengubah 10000 jadi 10.000 (Format Indo)"""
+    try:
+        return f"{int(angka):,}".replace(",", ".")
+    except:
+        return str(angka)
+
+def send_telegram_log(message):
+    """Kirim log ke telegram tanpa bikin bot macet"""
+    def _send():
+        try:
+            timestamp = datetime.now().strftime("%H:%M")
+            formatted_msg = f"🤖 **BOT LAPORAN** [{timestamp}]\n\n{message}"
+            bot_tele.send_message(TELEGRAM_CHAT_ID, formatted_msg)
+        except: pass
+    t = threading.Thread(target=_send)
+    t.daemon = True
+    t.start()
+
+def show_header():
+    clear()
+    console.print(
+        Panel(
+            Align.center(
+                "[bold cyan]🔥 INSTAGRAM COMMAND CENTER 🔥[/bold cyan]\n"
+                "[dim]V3.0 • Pure Python • Device Spoofing[/dim]"
+            ),
+            style="bold blue",
+            border_style="blue"
+        )
+    )
+
+# ================= FITUR UTAMA =================
+
+def info_dashboard():
+    if not active_client: return
+    
+    with console.status("[bold green]Mengambil data akun...[/bold green]"):
+        try:
+            my_id = active_client.user_id
+            info = active_client.user_info_v1(my_id)
+            
+            show_header()
+            
+            # Tabel Utama
+            table = Table(title=f"PROFIL: @{info.username}", title_style="bold yellow", expand=True)
+            table.add_column("METRIK", justify="right", style="cyan", no_wrap=True)
+            table.add_column("NILAI", style="magenta bold")
+            
+            table.add_row("Nama", info.full_name)
+            table.add_row("Followers", format_indo(info.follower_count))
+            table.add_row("Following", format_indo(info.following_count))
+            table.add_row("Total Post", format_indo(info.media_count))
+            table.add_row("Status", "🔒 Private" if info.is_private else "🌍 Public")
+            
+            console.print(table)
+            
+            # Info Device
+            dev = active_client.device_settings
+            dev_info = f"📱 Device: [white]{dev['model']}[/white] | 🆔 Android ID: [white]{active_client.android_device_id[:16]}...[/white]"
+            console.print(Panel(dev_info, title="Security Layer", style="green"))
+            
+            questionary.press_any_key_to_continue().ask()
+            
+        except Exception as e:
+            console.print(f"[bold red]❌ Gagal: {e}[/bold red]")
+            questionary.press_any_key_to_continue().ask()
+
+def feature_auto_like():
+    if not active_client: return
+    
+    console.print("\n[bold cyan]❤️ AUTO LIKE ENGINE[/bold cyan]")
+    hashtag = questionary.text("Target Hashtag (tanpa #):").ask()
+    if not hashtag: return
+    limit = int(questionary.text("Jumlah Like:", default="10").ask())
+    
+    sukses, gagal = 0, 0
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(bar_width=40, style="dim", complete_style="green"),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        console=console
+    ) as progress:
+        
+        task_id = progress.add_task("Mencari Target...", total=limit)
+        
+        try:
+            medias = active_client.hashtag_medias_v1(hashtag, amount=limit, tab_key="recent")
+            if not medias:
+                progress.update(task_id, description="[yellow]Mode Top Posts...[/yellow]")
+                medias = active_client.hashtag_medias_v1(hashtag, amount=limit, tab_key="top")
+            
+            if not medias:
+                console.print("[red]❌ Zonk! Tidak ada postingan.[/red]")
+                time.sleep(2)
+                return
+
+            progress.update(task_id, description="Processing...", total=len(medias))
+            
+            for media in medias:
+                try:
+                    time.sleep(random.uniform(2, 4))
+                    active_client.media_like(media.id)
+                    sukses += 1
+                    progress.console.print(f"   ✅ Liked: [white]{media.code}[/white]")
+                    progress.advance(task_id)
+                    time.sleep(random.uniform(3, 7))
+                except Exception as e:
+                    gagal += 1
+                    if "feedback_required" in str(e).lower():
+                        progress.console.print("[bold red]⚠️ SOFTBAN DETECTED![/bold red]")
+                        break
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            
+    report = f"✅ **AUTO LIKE SELESAI**\nUser: {current_user_data['username']}\nTarget: #{hashtag}\nSukses: {sukses} | Gagal: {gagal}"
+    send_telegram_log(report)
+    console.print(Panel(f"Sukses: {sukses} | Gagal: {gagal}", title="Hasil", style="green"))
+    questionary.press_any_key_to_continue().ask()
+
+def feature_auto_follow():
+    if not active_client: return
+    console.print("\n[bold cyan]👥 AUTO FOLLOW ENGINE[/bold cyan]")
+    target = questionary.text("Target Username:").ask()
+    if not target: return
+    limit = int(questionary.text("Jumlah Follow:", default="10").ask())
+    
+    sukses = 0
+    with Progress(SpinnerColumn(), TextColumn("{task.description}"), BarColumn(), console=console) as progress:
+        task = progress.add_task("Scraping...", total=limit)
+        try:
+            target_id = active_client.user_id_from_username(target)
+            followers = active_client.user_followers(target_id, amount=limit)
+            progress.update(task, description="Following...", total=len(followers))
+            
+            for uid in followers:
+                try:
+                    active_client.user_follow(uid)
+                    sukses += 1
+                    progress.console.print(f"   ➕ Followed: {uid}")
+                    progress.advance(task)
+                    time.sleep(random.uniform(4, 9))
+                except: pass
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+
+    send_telegram_log(f"✅ **AUTO FOLLOW SELESAI**\nUser: {current_user_data['username']}\nTarget: @{target}\nSukses: {sukses}")
+    questionary.press_any_key_to_continue().ask()
+
+# ================= LOGIN SYSTEM =================
+
+def login_menu():
+    global active_client, current_user_data
+    show_header()
+    
+    try:
+        acc_manager = AccountManager()
+        accounts = acc_manager.get_all_accounts()
+    except:
+        console.print("[red]❌ Gagal memuat database akun![/red]")
+        return
+
+    if not accounts:
+        console.print("[yellow]⚠️ Database kosong. Tambahkan akun di main.py dulu.[/yellow]")
+        questionary.press_any_key_to_continue().ask()
+        return
+
+    choices = [f"{acc['username']}" for acc in accounts]
+    choices.append("❌ Kembali")
+    
+    choice = questionary.select("Pilih Akun:", choices=choices).ask()
+    if choice == "❌ Kembali": return
+    
+    selected_acc = next((a for a in accounts if a['username'] == choice), None)
+    current_user_data = selected_acc
+    
+    lm = LoginManager()
+    with console.status(f"[bold green]Login @{choice}...[/bold green]"):
+        client, success = lm.login_account(selected_acc['username'], selected_acc['password'])
+        if success:
+            active_client = client
+            send_telegram_log(f"🔓 **LOGIN SUKSES**\nUser: {choice}\nDevice: {client.device_settings['model']}")
         else:
-            print(Fore.RED + "❌ Gagal login.")
-        self._pause()
+            console.print("[red]❌ Gagal Login[/red]")
+            questionary.press_any_key_to_continue().ask()
 
-    # =====================================================
-    # 👤 ACCOUNT MANAGEMENT
-    # =====================================================
-    def account_menu(self):
-        while True:
-            self._clear_screen()
-            self._banner()
-            print(Fore.YELLOW + "👤 ACCOUNT MENU" + Style.RESET_ALL)
-            print("1️⃣ Tambah akun")
-            print("2️⃣ Hapus akun")
-            print("3️⃣ Lihat daftar akun")
-            print("4️⃣ Login semua akun")
-            print("0️⃣ Kembali")
-            choice = input("\nPilih opsi: ").strip()
+# ================= MAIN MENU =================
 
-            if choice == "1":
-                u = input("Username: ")
-                p = input("Password: ")
-                n = input("Catatan (opsional): ")
-                self.account_manager.add_account(u, p, n)
-            elif choice == "2":
-                u = input("Username yang dihapus: ")
-                self.account_manager.remove_account(u)
-            elif choice == "3":
-                self.account_manager.list_accounts()
-            elif choice == "4":
-                self.account_manager.login_all()
-            elif choice == "0":
-                break
-            else:
-                print("❌ Pilihan tidak valid.")
-            self._pause()
-
-    # =====================================================
-    # 📅 SCHEDULER
-    # =====================================================
-    def scheduler_menu(self):
-        self._clear_screen()
-        self._banner()
-        print(Fore.CYAN + "📅 MULTI-ACCOUNT SCHEDULER" + Style.RESET_ALL)
-        print("Scheduler akan menjalankan auto task setiap interval.")
-        confirm = input("Mulai scheduler sekarang? (y/n): ").lower().strip()
-        if confirm == "y":
-            self._loading("Menjalankan scheduler")
-            self.scheduler.start()
+def main():
+    while True:
+        show_header()
+        
+        if active_client:
+            status = f"[bold green]● ONLINE: @{current_user_data['username']}[/bold green]"
+            menu = ["👤 Dashboard", "❤️ Auto Like", "👥 Auto Follow", "🚪 Logout", "❌ Exit"]
         else:
-            print("⏸️ Scheduler dibatalkan.")
-        self._pause()
-
-    # =====================================================
-    # 📊 ANALYTICS
-    # =====================================================
-    def analytics_menu(self):
-        while True:
-            self._clear_screen()
-            self._banner()
-            print(Fore.CYAN + "📊 ANALYTICS MENU" + Style.RESET_ALL)
-            print("1️⃣ Tambah data harian")
-            print("2️⃣ Tampilkan laporan akun")
-            print("0️⃣ Kembali")
-            choice = input("\nPilih opsi: ").strip()
-
-            if choice == "1":
-                u = input("Username: ")
-                f = int(input("Followers: "))
-                g = int(input("Following: "))
-                p = int(input("Jumlah post: "))
-                l = int(input("Likes total hari ini: "))
-                c = int(input("Comments total hari ini: "))
-                self.analytics.record_daily_stats(u, f, g, p, l, c)
-            elif choice == "2":
-                u = input("Username: ")
-                self.analytics.print_report(u)
-            elif choice == "0":
-                break
-            else:
-                print("❌ Pilihan tidak valid.")
-            self._pause()
-
-    # =====================================================
-    # ⚙️ MAIN MENU
-    # =====================================================
-    def main_menu(self):
-        while True:
-            self._clear_screen()
-            self._banner()
-            print(Fore.YELLOW + "✨ MAIN MENU" + Style.RESET_ALL)
-            print("1️⃣ Login akun")
-            print("2️⃣ Kelola akun")
-            print("3️⃣ Jalankan scheduler")
-            print("4️⃣ Lihat analytics")
-            print("0️⃣ Keluar")
-
-            choice = input("\nPilih opsi: ").strip()
-            if choice == "1":
-                self.login_menu()
-            elif choice == "2":
-                self.account_menu()
-            elif choice == "3":
-                self.scheduler_menu()
-            elif choice == "4":
-                self.analytics_menu()
-            elif choice == "0":
-                print("👋 Terima kasih sudah menggunakan Bucol Bot!")
-                break
-            else:
-                print("❌ Pilihan tidak valid.")
-                self._pause()
-
+            status = "[bold red]○ OFFLINE[/bold red]"
+            menu = ["🔐 Login Akun", "❌ Exit"]
+            
+        console.print(Panel(Align.center(status), style="white"))
+        
+        choice = questionary.select("MENU UTAMA", choices=menu).ask()
+        
+        if choice == "🔐 Login Akun": login_menu()
+        elif choice == "👤 Dashboard": info_dashboard()
+        elif choice == "❤️ Auto Like": feature_auto_like()
+        elif choice == "👥 Auto Follow": feature_auto_follow()
+        elif choice == "🚪 Logout": active_client = None
+        elif choice == "❌ Exit": break
 
 if __name__ == "__main__":
-    app = DashboardController()
-    app.main_menu()
+    main()
