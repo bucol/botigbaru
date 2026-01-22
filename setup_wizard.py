@@ -18,7 +18,7 @@ class Colors:
     BLUE = '\033[94m'
     CYAN = '\033[96m'
     GREEN = '\033[92m'
-    YELLOW = '\033[93m'  # <--- INI YANG TADI KURANG
+    YELLOW = '\033[93m'
     WARNING = '\033[93m'
     FAIL = '\033[91m'
     ENDC = '\033[0m'
@@ -162,8 +162,12 @@ def test_login_sequence():
             
             if client:
                 print(f"{Colors.GREEN}[SUCCESS] Login Berhasil!{Colors.ENDC}")
-                print(f"   ├─ Device: {client.device_settings['model']}")
-                print(f"   ├─ Locale: {client.device_settings['locale']}")
+                # Menggunakan .get() agar tidak error jika key tidak ditemukan
+                device_model = client.device_settings.get('model', 'Unknown Android')
+                locale = client.device_settings.get('locale', 'id_ID')
+                
+                print(f"   ├─ Device: {device_model}")
+                print(f"   ├─ Locale: {locale}")
                 print(f"   └─ Status: Session tersimpan di /sessions")
             else:
                 print(f"{Colors.FAIL}[FAILED] Gagal login. Cek password atau 2FA.{Colors.ENDC}")
