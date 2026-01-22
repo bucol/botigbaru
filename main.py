@@ -4,41 +4,39 @@ Instagram Bot - Main Controller
 Mengintegrasikan semua module menjadi satu sistem
 """
 
-<<<<<<< Updated upstream
+import os
+import sys
+import signal
+import asyncio
+import logging
+import random
+from pathlib import Path
+from datetime import datetime
+from dotenv import load_dotenv
+
+# Setup path agar module bisa ditemukan
+BASE_DIR = Path(__file__).parent
+sys.path.insert(0, str(BASE_DIR))
+
+# Load environment variables
+load_dotenv()
+
+# --- IMPORT CORE MODULES ---
 from core.device_identity_generator import DeviceIdentityGenerator
-# Dummy verification_handler kalau hilang
+# Fallback untuk VerificationHandler agar tidak error jika file belum sempurna
 try:
     from core.verification_handler import VerificationHandler
 except ImportError:
     class VerificationHandler:
         def __init__(self):
             self.max_retries = 3
-from core.session_manager import SessionManager as SessionManagerV2
-from core.account_manager import AccountManager
-=======
-import os
-import sys
-import signal
-import asyncio
-import logging
-from pathlib import Path
-from datetime import datetime
-from dotenv import load_dotenv
 
-# Setup path
-BASE_DIR = Path(__file__).parent
-sys.path.insert(0, str(BASE_DIR))
-
-# Load environment
-load_dotenv()
-
-# Import modules
->>>>>>> Stashed changes
 from core.login_manager import LoginManager
-from core.verification_handler import VerificationHandler
 from core.analytics import Analytics
 from core.scheduler import MultiAccountScheduler
 from core.telegram_handler import TelegramBotHandler as TelegramHandler
+
+# --- IMPORT FEATURE MODULES ---
 from features.auto_like import AutoLike
 from features.auto_follow import AutoFollow
 from features.auto_comment import AutoComment
@@ -57,7 +55,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 class BotController:
     """Main controller yang mengintegrasikan semua module"""
     
@@ -67,7 +64,7 @@ class BotController:
         
         # Ensure directories exist
         for folder in ['data', 'data/scraped', 'logs', 'sessions']:
-            Path(folder).mkdir(exist_ok=True)
+            Path(folder).mkdir(parents=True, exist_ok=True)
         
         # Initialize core modules
         self.login_manager = LoginManager()
@@ -102,8 +99,12 @@ class BotController:
         
     def setup_signal_handlers(self):
         """Setup graceful shutdown handlers"""
-        signal.signal(signal.SIGINT, self.shutdown)
-        signal.signal(signal.SIGTERM, self.shutdown)
+        try:
+            signal.signal(signal.SIGINT, self.shutdown)
+            signal.signal(signal.SIGTERM, self.shutdown)
+        except ValueError:
+            # Handle case if running in non-main thread (rare but possible)
+            logger.warning("Could not setup signal handlers (likely running in background thread)")
         
     def shutdown(self, signum=None, frame=None):
         """Graceful shutdown"""
@@ -112,7 +113,10 @@ class BotController:
         
         # Save analytics
         if self.analytics:
-            self.analytics.save_stats()
+            try:
+                self.analytics.save_stats()
+            except Exception as e:
+                logger.error(f"Error saving stats: {e}")
             
         # Logout current session
         if self.current_client:
@@ -154,6 +158,7 @@ class BotController:
                 
             logger.info(f"🔐 Login ke @{account['username']}...")
             
+            # Disini nanti kita pastikan device ID di-generate biar unik (Anti-Detect)
             client = self.login_manager.login(
                 account['username'],
                 account['password']
@@ -180,6 +185,7 @@ class BotController:
             active_accounts = [a for a in accounts if a.get('is_active', True)]
             
             if len(active_accounts) < 2:
+                logger.warning("⚠️ Tidak cukup akun untuk rotasi.")
                 return False
                 
             # Find next account
@@ -191,9 +197,14 @@ class BotController:
             next_idx = (current_idx + 1) % len(active_accounts)
             next_account = active_accounts[next_idx]
             
+            logger.info(f"🔄 Rotating account: @{self.current_account} -> @{next_account['username']}")
+
             # Logout current
             if self.current_client:
-                self.login_manager.logout(self.current_account)
+                try:
+                    self.login_manager.logout(self.current_account)
+                except Exception as e:
+                    logger.warning(f"Logout error: {e}")
                 
             # Login next
             return self.login_account(next_account['username'])
@@ -219,20 +230,22 @@ class BotController:
                     
                     logger.info(f"▶️ Executing: {action_type} -> {target}")
                     
+                    result = {}
+                    
                     if action_type == 'like':
-                        result = self.auto_like.like_by_hashtag(target, limit=5)
+                        result = self.auto_like.like_by_hashtag(target, limit=random.randint(3, 7)) # Random limit
                         self.actions_count['likes'] += result.get('liked', 0)
                         
                     elif action_type == 'follow':
-                        result = self.auto_follow.follow_user_followers(target, limit=5)
+                        result = self.auto_follow.follow_user_followers(target, limit=random.randint(3, 8))
                         self.actions_count['follows'] += result.get('followed', 0)
                         
                     elif action_type == 'comment':
-                        result = self.auto_comment.comment_by_hashtag(target, limit=3)
+                        result = self.auto_comment.comment_by_hashtag(target, limit=random.randint(2, 5))
                         self.actions_count['comments'] += result.get('commented', 0)
                         
                     elif action_type == 'story':
-                        result = self.auto_story.view_followers_stories(limit=10)
+                        result = self.auto_story.view_followers_stories(limit=random.randint(8, 15))
                         self.actions_count['stories'] += result.get('viewed', 0)
                         
                     elif action_type == 'dm':
@@ -246,9 +259,11 @@ class BotController:
                     # Mark task completed
                     self.scheduler.complete_task(next_task['id'])
                     
-                # Random delay between actions
-                import random
-                await asyncio.sleep(random.uniform(30, 90))
+                # --- LOGIKA ANTI-DETECT (HUMAN BEHAVIOR) ---
+                # Jangan pakai waktu statis, pakai range yang lebar dan acak
+                delay = random.uniform(45, 120) 
+                logger.info(f"⏳ Sleeping for {int(delay)}s (Human behavior)...")
+                await asyncio.sleep(delay)
                 
             except Exception as e:
                 logger.error(f"❌ Auto action error: {e}")
@@ -297,8 +312,8 @@ class BotController:
         
         # Login to first account
         if not self.login_account():
-            logger.error("❌ Failed to login, exiting...")
-            return
+            logger.error("❌ Failed to login initial account. Waiting for commands or manual login...")
+            # Kita tidak return, agar bot tetap jalan (misal nunggu perintah Telegram)
             
         # Run tasks concurrently
         await asyncio.gather(
@@ -306,23 +321,26 @@ class BotController:
             self.run_telegram_bot()
         )
 
-
 def main():
     """Entry point"""
     print("""
     ╔══════════════════════════════════════╗
-    ║     Instagram Bot v2.0               ║
-    ║     Multi-Account Automation         ║
+    ║      Instagram Bot v2.0              ║
+    ║      Multi-Account Automation        ║
     ╚══════════════════════════════════════╝
     """)
     
     controller = BotController()
     
     try:
+        if sys.platform == 'win32':
+            # Fix untuk Windows Event Loop jika diperlukan
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         asyncio.run(controller.start())
     except KeyboardInterrupt:
         controller.shutdown()
-
+    except Exception as e:
+        logger.critical(f"🔥 Critical Error: {e}")
 
 if __name__ == "__main__":
     main()
