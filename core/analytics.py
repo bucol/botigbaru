@@ -1,159 +1,118 @@
 #!/usr/bin/env python3
 """
-Analytics Core - Production Fixed Version
-
-Tugas:
-- Melacak statistik akun (followers, likes, comments, posts)
-- Menghitung growth & engagement rate
-- Menyimpan log harian di logs/stats.json
-- Kompatibel Termux & Windows
-
-Dependensi:
-  pip install python-dotenv
+Analytics Core - Enhanced Version
+Fitur:
+- Action Logging (Melacak setiap like/comment individu)
+- Daily Stats Snapshot
+- Exportable Reports
 """
 
 import os
 import json
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime
 from collections import defaultdict
-from statistics import mean
 
+logger = logging.getLogger(__name__)
 
 class Analytics:
     def __init__(self, log_dir="logs"):
         self.log_dir = log_dir
         self.stats_file = os.path.join(log_dir, "stats.json")
+        self.activity_log = os.path.join(log_dir, "activity_log.json")
+        
         os.makedirs(log_dir, exist_ok=True)
-        self.stats = self._load_stats()
+        
+        self.stats = self._load_json(self.stats_file)
+        self.activities = self._load_json(self.activity_log)
 
-    # =====================================================
-    # 📦 FILE HANDLER
-    # =====================================================
-    def _load_stats(self):
-        """Load file stats.json"""
-        if not os.path.exists(self.stats_file):
-            with open(self.stats_file, "w", encoding="utf-8") as f:
-                json.dump({}, f)
+    def _load_json(self, filepath):
+        if not os.path.exists(filepath):
             return {}
         try:
-            with open(self.stats_file, "r", encoding="utf-8") as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except json.JSONDecodeError:
-            print("⚠️ File stats.json korup, membuat ulang baru.")
+        except Exception:
             return {}
 
-    def _save_stats(self):
-        with open(self.stats_file, "w", encoding="utf-8") as f:
-            json.dump(self.stats, f, indent=2)
+    def _save_json(self, data, filepath):
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.error(f"❌ Error saving analytics: {e}")
 
     # =====================================================
-    # 🧩 RECORD & UPDATE
+    # 🧩 ACTION TRACKING (Real-time)
     # =====================================================
-    def record_daily_stats(self, username, followers, following, posts, likes, comments):
-        """Rekam statistik harian akun"""
+    def track_action(self, action_type, success, metadata=None):
+        """
+        Melacak satu aksi spesifik.
+        Contoh: track_action('like', True, {'target': 'jokowi', 'media_id': 123})
+        """
         today = datetime.now().strftime("%Y-%m-%d")
+        username = metadata.get("username", "unknown") if metadata else "unknown"
+        
+        # 1. Update Daily Counter
         if username not in self.stats:
             self.stats[username] = {}
-        self.stats[username][today] = {
-            "followers": followers,
-            "following": following,
-            "posts": posts,
-            "likes": likes,
-            "comments": comments,
-        }
-        self._save_stats()
-        print(f"📈 Statistik {username} diperbarui ({today}).")
+        if today not in self.stats[username]:
+            self.stats[username][today] = {
+                "likes": 0, "follows": 0, "comments": 0, 
+                "stories": 0, "dms": 0, "errors": 0
+            }
+            
+        key = f"{action_type}s" if not action_type.endswith('s') else action_type
+        if success:
+            if key in self.stats[username][today]:
+                self.stats[username][today][key] += 1
+        else:
+            self.stats[username][today]["errors"] += 1
+            
+        self._save_json(self.stats, self.stats_file)
+
+        # 2. Log Activity Detail (Optional: Bisa dimatikan kalau file kebesaran)
+        if metadata:
+            entry = {
+                "time": datetime.now().isoformat(),
+                "action": action_type,
+                "success": success,
+                "details": metadata
+            }
+            if username not in self.activities:
+                self.activities[username] = []
+            
+            self.activities[username].append(entry)
+            # Keep only last 1000 logs per user to save space
+            if len(self.activities[username]) > 1000:
+                self.activities[username] = self.activities[username][-1000:]
+                
+            self._save_json(self.activities, self.activity_log)
 
     # =====================================================
-    # 📊 GROWTH CALCULATION
+    # 📈 STATS SUMMARY
     # =====================================================
-    def _calc_growth(self, data):
-        """Hitung growth harian"""
-        days = sorted(data.keys())
-        if len(days) < 2:
-            return 0
-        today, yesterday = days[-1], days[-2]
-        f_today = data[today]["followers"]
-        f_yesterday = data[yesterday]["followers"]
-        return f_today - f_yesterday
+    def get_today_stats(self, username=None):
+        """Mengambil statistik hari ini"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        if username:
+            return self.stats.get(username, {}).get(today, {})
+        
+        # Aggregate all users
+        total = defaultdict(int)
+        for user, days in self.stats.items():
+            if today in days:
+                for k, v in days[today].items():
+                    total[k] += v
+        return dict(total)
 
-    def _calc_engagement(self, data):
-        """Hitung engagement rate (likes + comments / followers)"""
-        days = sorted(data.keys())
-        if not days:
-            return 0.0
-        total_likes = sum(v["likes"] for v in data.values())
-        total_comments = sum(v["comments"] for v in data.values())
-        avg_followers = mean(v["followers"] for v in data.values())
-        if avg_followers == 0:
-            return 0.0
-        return round(((total_likes + total_comments) / (avg_followers * len(days))) * 100, 2)
-
-    # =====================================================
-    # 🧠 ANALYTICS SUMMARY
-    # =====================================================
-    def get_summary(self, username):
-        """Ambil ringkasan analytics akun"""
-        if username not in self.stats:
-            print(f"⚠️ Tidak ada data untuk {username}")
-            return None
-        data = self.stats[username]
-        growth = self._calc_growth(data)
-        engagement = self._calc_engagement(data)
-        last_day = sorted(data.keys())[-1]
-        last_stats = data[last_day]
-        summary = {
-            "username": username,
-            "followers": last_stats["followers"],
-            "following": last_stats["following"],
-            "posts": last_stats["posts"],
-            "growth": growth,
-            "engagement_rate": engagement,
-            "last_updated": last_day,
-        }
-        return summary
-
-    # =====================================================
-    # 📋 REPORT DISPLAY
-    # =====================================================
-    def print_report(self, username):
-        """Tampilkan laporan akun"""
-        summary = self.get_summary(username)
-        if not summary:
-            return
-        print("\n📊 Laporan Analytics Akun")
-        print("=" * 35)
-        print(f"👤 Username: {summary['username']}")
-        print(f"👥 Followers: {summary['followers']}")
-        print(f"➡️ Following: {summary['following']}")
-        print(f"🖼️ Posts: {summary['posts']}")
-        print(f"📈 Growth (24h): {summary['growth']:+}")
-        print(f"💬 Engagement Rate: {summary['engagement_rate']}%")
-        print(f"🕓 Last Updated: {summary['last_updated']}")
-        print("=" * 35)
-
+    def save_stats(self):
+        """Force save"""
+        self._save_json(self.stats, self.stats_file)
+        self._save_json(self.activities, self.activity_log)
 
 if __name__ == "__main__":
-    analytics = Analytics()
-
-    # Simulasi input manual untuk testing
-    print("\n=== Analytics CLI ===")
-    while True:
-        print("\n1️⃣ Tambah data harian\n2️⃣ Tampilkan laporan\n0️⃣ Keluar")
-        choice = input("Pilih opsi: ").strip()
-        if choice == "1":
-            user = input("Username: ")
-            followers = int(input("Followers: "))
-            following = int(input("Following: "))
-            posts = int(input("Jumlah post: "))
-            likes = int(input("Likes total hari ini: "))
-            comments = int(input("Comments total hari ini: "))
-            analytics.record_daily_stats(user, followers, following, posts, likes, comments)
-        elif choice == "2":
-            user = input("Username: ")
-            analytics.print_report(user)
-        elif choice == "0":
-            print("👋 Keluar dari Analytics CLI.")
-            break
-        else:
-            print("❌ Pilihan tidak valid.")
+    a = Analytics()
+    a.track_action("like", True, {"username": "test_bot", "target": "photo_1"})
+    print(a.get_today_stats("test_bot"))
