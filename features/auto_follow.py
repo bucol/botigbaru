@@ -1,353 +1,163 @@
 """
-Auto Follow Module
-Otomatis follow user berdasarkan kriteria tertentu
+Auto Follow Module - Enhanced "Humanized" Version
+Fitur: Smart Filtering, Profile Visit Simulation, Safe Unfollow
 """
 
 import time
 import random
 import json
-from datetime import datetime
+import logging
 from pathlib import Path
+from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 class AutoFollow:
     def __init__(self, client, analytics=None, scheduler=None):
         self.client = client
         self.analytics = analytics
-        self.scheduler = scheduler
         self.config = self._load_config()
-        self.followed_users = self._load_followed_users()
-        self.whitelist = self._load_whitelist()
-        self.blacklist = self._load_blacklist()
-        
+        self.followed_users = self._load_json("data/followed_users.json")
+        self.whitelist = set(self._load_json("data/whitelist.json", default=[]))
+        self.blacklist = set(self._load_json("data/blacklist.json", default=[]))
+
     def _load_config(self):
-        """Load konfigurasi auto follow"""
         return {
-            "daily_limit": 50,
-            "delay_min": 60,
-            "delay_max": 180,
-            "follow_probability": 0.6,
-            "min_followers": 100,
-            "max_followers": 50000,
-            "min_following": 50,
-            "max_following": 2000,
-            "min_posts": 5,
-            "skip_private": False,
-            "skip_business": False,
-            "skip_verified": True,
-            "follow_back_only": False
+            "daily_follow_limit": random.randint(40, 80), # Limit aman 2024
+            "follow_prob": 0.7, # Tidak semua target di-follow
+            "min_followers": 150,
+            "max_followers": 10000,
+            "min_posts": 3,
+            "skip_private": True,
+            "skip_business": True,
+            "unfollow_after_days": 4
         }
-    
-    def _load_followed_users(self):
-        """Load daftar user yang sudah di-follow"""
-        file_path = Path("data/followed_users.json")
-        if file_path.exists():
-            with open(file_path, "r") as f:
-                return json.load(f)
-        return {}
-    
-    def _save_followed_users(self):
-        """Simpan daftar user yang sudah di-follow"""
-        Path("data").mkdir(exist_ok=True)
+
+    def _load_json(self, path, default=None):
+        if default is None: default = {}
+        try:
+            if Path(path).exists():
+                with open(path, "r") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return default
+
+    def _save_followed(self):
         with open("data/followed_users.json", "w") as f:
             json.dump(self.followed_users, f, indent=2)
-    
-    def _load_whitelist(self):
-        """Load whitelist (jangan unfollow)"""
-        file_path = Path("data/whitelist.json")
-        if file_path.exists():
-            with open(file_path, "r") as f:
-                return set(json.load(f))
-        return set()
-    
-    def _load_blacklist(self):
-        """Load blacklist (jangan follow)"""
-        file_path = Path("data/blacklist.json")
-        if file_path.exists():
-            with open(file_path, "r") as f:
-                return set(json.load(f))
-        return set()
-    
+
+    def _human_delay(self):
+        """Delay lebih lama untuk aksi follow (High Risk Action)"""
+        time.sleep(random.uniform(20, 60))
+
     def _should_follow(self, user_info):
-        """Cek apakah user layak di-follow"""
-        try:
-            username = user_info.username
-            
-            # Cek blacklist
-            if username in self.blacklist:
-                return False, "User dalam blacklist"
-            
-            # Cek sudah di-follow
-            if username in self.followed_users:
-                return False, "Sudah pernah di-follow"
-            
-            # Cek private
-            if self.config["skip_private"] and user_info.is_private:
-                return False, "Akun private"
-            
-            # Cek business
-            if self.config["skip_business"] and user_info.is_business:
-                return False, "Akun bisnis"
-            
-            # Cek verified
-            if self.config["skip_verified"] and user_info.is_verified:
-                return False, "Akun verified"
-            
-            # Cek followers
-            followers = user_info.follower_count or 0
-            if followers < self.config["min_followers"]:
-                return False, f"Followers terlalu sedikit ({followers})"
-            if followers > self.config["max_followers"]:
-                return False, f"Followers terlalu banyak ({followers})"
-            
-            # Cek following
-            following = user_info.following_count or 0
-            if following < self.config["min_following"]:
-                return False, f"Following terlalu sedikit ({following})"
-            if following > self.config["max_following"]:
-                return False, f"Following terlalu banyak ({following})"
-            
-            # Cek posts
-            posts = user_info.media_count or 0
-            if posts < self.config["min_posts"]:
-                return False, f"Posts terlalu sedikit ({posts})"
-            
-            # Random probability
-            if random.random() > self.config["follow_probability"]:
-                return False, "Skip berdasarkan probability"
-            
-            return True, "OK"
-        except Exception as e:
-            return False, f"Error: {str(e)}"
-    
-    def follow_user(self, username):
-        """Follow single user"""
-        try:
-            username = username.lstrip("@")
-            
-            user_id = self.client.user_id_from_username(username)
-            user_info = self.client.user_info(user_id)
-            
-            should_follow, reason = self._should_follow(user_info)
-            if not should_follow:
-                return {"success": False, "reason": reason}
-            
-            self.client.user_follow(user_id)
-            
-            # Simpan ke followed users
-            self.followed_users[username] = {
-                "user_id": str(user_id),
-                "followed_at": datetime.now().isoformat(),
-                "followers": user_info.follower_count,
-                "following": user_info.following_count
-            }
-            self._save_followed_users()
-            
-            if self.analytics:
-                self.analytics.track_action("follow", True, {"target": username})
-            
-            return {"success": True, "username": username}
-            
-        except Exception as e:
-            if self.analytics:
-                self.analytics.track_action("follow", False, {"error": str(e)})
-            return {"success": False, "error": str(e)}
-    
-    def follow_followers_of(self, username, amount=10):
-        """Follow followers dari user tertentu"""
-        results = {"success": 0, "failed": 0, "skipped": 0, "errors": []}
+        if user_info.username in self.blacklist or user_info.username in self.followed_users:
+            return False, "Blacklisted/Already followed"
         
-        try:
-            username = username.lstrip("@")
+        if self.config["skip_private"] and user_info.is_private:
+            return False, "Private account"
             
-            print(f"🔍 Mengambil followers dari @{username}...")
-            user_id = self.client.user_id_from_username(username)
-            followers = self.client.user_followers(user_id, amount=amount * 2)
+        if self.config["skip_business"] and user_info.is_business:
+            return False, "Business account"
+            
+        if not (self.config["min_followers"] <= user_info.follower_count <= self.config["max_followers"]):
+            return False, "Followers count criteria unmet"
+            
+        return True, "OK"
+
+    def follow_user_followers(self, target_user, limit=10):
+        """Follow followers dari akun target"""
+        results = {"success": 0, "skipped": 0}
+        try:
+            target_id = self.client.user_id_from_username(target_user)
+            logger.info(f"🔍 Scavenging followers from @{target_user}...")
+            
+            # Ambil followers random, jangan urut dari atas (pola bot)
+            followers = self.client.user_followers(target_id, amount=limit * 3)
+            candidate_ids = list(followers.keys())
+            random.shuffle(candidate_ids)
             
             count = 0
-            for user_id, user_info in followers.items():
-                if count >= amount:
-                    break
+            for uid in candidate_ids:
+                if count >= limit: break
                 
                 try:
-                    full_info = self.client.user_info(user_id)
-                    should_follow, reason = self._should_follow(full_info)
+                    # 1. Simulasi "Visit Profile" (Ambil info user)
+                    user_info = self.client.user_info(uid)
                     
-                    if not should_follow:
+                    # 2. Filter
+                    should, reason = self._should_follow(user_info)
+                    if not should:
+                        logger.info(f"⏭️ Skip @{user_info.username}: {reason}")
                         results["skipped"] += 1
-                        print(f"⏭️ Skip @{user_info.username}: {reason}")
+                        time.sleep(random.uniform(2, 5)) # Jeda pendek saat skip
                         continue
-                    
-                    self.client.user_follow(user_id)
+                        
+                    # 3. Random Probability check
+                    if random.random() > self.config["follow_prob"]:
+                        logger.info(f"🎲 Skipped @{user_info.username} (Human Randomness)")
+                        continue
+
+                    # 4. Action Follow
+                    self.client.user_follow(uid)
+                    logger.info(f"➕ Followed @{user_info.username}")
                     
                     self.followed_users[user_info.username] = {
-                        "user_id": str(user_id),
-                        "followed_at": datetime.now().isoformat(),
-                        "source": f"followers_of_{username}"
+                        "id": str(uid),
+                        "time": datetime.now().isoformat(),
+                        "source": target_user
                     }
-                    
-                    results["success"] += 1
-                    count += 1
+                    self._save_followed()
                     
                     if self.analytics:
-                        self.analytics.track_action("follow", True, {
-                            "source": "followers_of",
-                            "source_user": username
-                        })
-                    
-                    print(f"✅ Followed: @{user_info.username}")
-                    
-                    delay = random.randint(self.config["delay_min"], self.config["delay_max"])
-                    print(f"⏳ Delay {delay} detik...")
-                    time.sleep(delay)
-                    
-                except Exception as e:
-                    results["failed"] += 1
-                    results["errors"].append(str(e))
-                    print(f"❌ Error: {str(e)}")
-            
-            self._save_followed_users()
-            
-        except Exception as e:
-            results["errors"].append(str(e))
-        
-        return results
-    
-    def follow_by_hashtag(self, hashtag, amount=10):
-        """Follow user yang post dengan hashtag tertentu"""
-        results = {"success": 0, "failed": 0, "skipped": 0, "errors": []}
-        
-        try:
-            hashtag = hashtag.lstrip("#")
-            
-            print(f"🔍 Mencari user dengan hashtag #{hashtag}...")
-            medias = self.client.hashtag_medias_recent(hashtag, amount=amount * 3)
-            
-            followed_usernames = set()
-            count = 0
-            
-            for media in medias:
-                if count >= amount:
-                    break
-                
-                username = media.user.username
-                
-                if username in followed_usernames:
-                    continue
-                
-                try:
-                    user_info = self.client.user_info(media.user.pk)
-                    should_follow, reason = self._should_follow(user_info)
-                    
-                    if not should_follow:
-                        results["skipped"] += 1
-                        continue
-                    
-                    self.client.user_follow(media.user.pk)
-                    followed_usernames.add(username)
-                    
-                    self.followed_users[username] = {
-                        "user_id": str(media.user.pk),
-                        "followed_at": datetime.now().isoformat(),
-                        "source": f"hashtag_{hashtag}"
-                    }
-                    
-                    results["success"] += 1
+                        self.analytics.track_action("follow", True, {"target": user_info.username})
+                        
                     count += 1
-                    
-                    if self.analytics:
-                        self.analytics.track_action("follow", True, {
-                            "source": "hashtag",
-                            "hashtag": hashtag
-                        })
-                    
-                    print(f"✅ Followed: @{username}")
-                    
-                    delay = random.randint(self.config["delay_min"], self.config["delay_max"])
-                    time.sleep(delay)
+                    self._human_delay()
                     
                 except Exception as e:
-                    results["failed"] += 1
-                    results["errors"].append(str(e))
-            
-            self._save_followed_users()
-            
+                    logger.error(f"❌ Failed to follow {uid}: {e}")
+                    time.sleep(30)
+
         except Exception as e:
-            results["errors"].append(str(e))
-        
+            logger.error(f"❌ Error getting followers: {e}")
+            
         return results
-    
-    def unfollow_non_followers(self, amount=10, days_old=3):
-        """Unfollow user yang tidak follow back setelah X hari"""
-        results = {"success": 0, "failed": 0, "skipped": 0, "errors": []}
+
+    def smart_unfollow(self, limit=10):
+        """Unfollow user yang sudah lama (FIFO) dan tidak ada di whitelist"""
+        logger.info("🔪 Starting Smart Unfollow...")
+        count = 0
         
-        try:
-            print("🔍 Mengecek following yang tidak follow back...")
+        # Sort based on followed time (Oldest first)
+        candidates = []
+        for uname, data in self.followed_users.items():
+            if uname in self.whitelist: continue
             
-            # Dapatkan followers saat ini
-            my_id = self.client.user_id
-            my_followers = set(self.client.user_followers(my_id).keys())
-            my_following = self.client.user_following(my_id)
-            
-            count = 0
-            for user_id, user_info in my_following.items():
-                if count >= amount:
-                    break
+            followed_time = datetime.fromisoformat(data["time"])
+            if datetime.now() - followed_time > timedelta(days=self.config["unfollow_after_days"]):
+                candidates.append((uname, data["id"]))
                 
-                username = user_info.username
-                
-                # Skip whitelist
-                if username in self.whitelist:
-                    results["skipped"] += 1
-                    continue
-                
-                # Cek apakah follow back
-                if user_id in my_followers:
-                    continue
-                
-                # Cek umur follow
-                if username in self.followed_users:
-                    followed_at = datetime.fromisoformat(
-                        self.followed_users[username].get("followed_at", datetime.now().isoformat())
-                    )
-                    days_since = (datetime.now() - followed_at).days
-                    
-                    if days_since < days_old:
-                        results["skipped"] += 1
-                        continue
-                
-                try:
-                    self.client.user_unfollow(user_id)
-                    results["success"] += 1
-                    count += 1
-                    
-                    # Hapus dari followed_users
-                    if username in self.followed_users:
-                        del self.followed_users[username]
-                    
-                    if self.analytics:
-                        self.analytics.track_action("unfollow", True, {"target": username})
-                    
-                    print(f"👋 Unfollowed: @{username}")
-                    
-                    delay = random.randint(30, 90)
-                    time.sleep(delay)
-                    
-                except Exception as e:
-                    results["failed"] += 1
-                    results["errors"].append(str(e))
-            
-            self._save_followed_users()
-            
-        except Exception as e:
-            results["errors"].append(str(e))
+        # Shuffle sedikit agar tidak persis urutan waktu
+        random.shuffle(candidates)
         
-        return results
-    
-    def get_stats(self):
-        """Dapatkan statistik auto follow"""
-        return {
-            "total_followed": len(self.followed_users),
-            "whitelist_count": len(self.whitelist),
-            "blacklist_count": len(self.blacklist),
-            "config": self.config
-        }
+        for uname, uid in candidates[:limit]:
+            try:
+                # Cek apakah dia followback? (Opsional, memakan request)
+                # friendship = self.client.user_friendship(uid)
+                # if friendship.following: continue # Jika dia followback, jangan unfollow
+                
+                self.client.user_unfollow(uid)
+                logger.info(f"➖ Unfollowed @{uname}")
+                
+                del self.followed_users[uname]
+                self._save_followed()
+                count += 1
+                
+                self._human_delay()
+                
+            except Exception as e:
+                logger.error(f"❌ Unfollow error: {e}")
+                
+        return {"unfollowed": count}
