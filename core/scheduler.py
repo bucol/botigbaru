@@ -1,145 +1,136 @@
 #!/usr/bin/env python3
 """
-Multi-Account Scheduler – Production Fixed Version
-
-Tugas:
-- Menjalankan tugas berulang (auto post, auto follow, auto dm, dll)
-- Mendukung multi-akun tanpa bentrok (thread-safe)
-- Auto retry kalau task gagal
-- Delay adaptif (anti-detection)
-
-Dependensi:
-  pip install schedule python-dotenv
+Multi-Account Scheduler – Enhanced Human Version
+Fitur:
+- Circadian Rhythm (Bot tidur malam, aktif siang)
+- Interval Jitter (Waktu tidak pernah pas/tepat)
+- Thread Pool Executor (Lebih stabil daripada raw threading)
 """
 
-import os
 import time
 import random
 import threading
-import traceback
+import logging
 from datetime import datetime, timedelta
-from queue import Queue
-from dotenv import load_dotenv
-import schedule
+from queue import Queue, Empty
+from concurrent.futures import ThreadPoolExecutor
 
-from core.login_manager import LoginManager
-
-load_dotenv()
-
+# Setup Logger
+logger = logging.getLogger(__name__)
 
 class MultiAccountScheduler:
-    def __init__(self):
-        self.login_manager = LoginManager()
-        self.running_tasks = {}
-        self.task_queue = Queue()
-        self.lock = threading.Lock()
+    def __init__(self, max_workers=5):
+        self.running_tasks = {} # {username: [job1, job2]}
         self.stop_flag = False
+        self.lock = threading.Lock()
+        
+        # Executor untuk menjalankan task secara paralel tapi terkontrol
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        
+        # Konfigurasi Jam Kerja (WIB/Local Time)
+        self.work_start_hour = 7  # Mulai jam 7 pagi
+        self.work_end_hour = 23   # Tidur jam 11 malam
 
     # ====================================================
-    # 🔁 TASK REGISTRATION
+    # 🧠 HUMAN LOGIC
     # ====================================================
-    def register_task(self, username, func, interval_minutes=60):
-        """
-        Daftarkan task per akun
-        """
-        if username not in self.running_tasks:
-            self.running_tasks[username] = []
+    def _is_working_hours(self):
+        """Cek apakah sekarang waktunya bot bekerja"""
+        current_hour = datetime.now().hour
+        # Bot istirahat antara jam 23:00 sampai 07:00
+        if self.work_start_hour <= current_hour < self.work_end_hour:
+            return True
+        return False
 
-        job = {
-            "username": username,
-            "func": func,
-            "interval": interval_minutes,
-            "next_run": datetime.now() + timedelta(minutes=interval_minutes),
-            "retries": 0,
-        }
-        self.running_tasks[username].append(job)
-        print(f"📅 Task baru untuk {username} dijadwalkan setiap {interval_minutes} menit.")
-
-    # ====================================================
-    # 🧠 EXECUTOR
-    # ====================================================
-    def _execute_task(self, job):
+    def _get_jittered_interval(self, base_interval_minutes):
         """
-        Jalankan 1 task (aman dari crash)
+        Menambahkan variasi waktu acak (Jitter).
+        Jika interval 60 menit, hasilnya bisa 45-75 menit.
         """
-        username = job["username"]
-        func = job["func"]
-        try:
-            print(f"▶️ [{username}] Menjalankan task pada {datetime.now().strftime('%H:%M:%S')}")
-            func(username)
-            print(f"✅ [{username}] Task berhasil.")
-        except Exception as e:
-            job["retries"] += 1
-            print(f"❌ [{username}] Task error: {e}")
-            traceback.print_exc()
-            if job["retries"] < 3:
-                delay = random.randint(30, 120)
-                print(f"🔁 Retry dalam {delay} detik...")
-                time.sleep(delay)
-                self._execute_task(job)
-            else:
-                print(f"🚫 [{username}] Task gagal setelah 3 percobaan.")
-        finally:
-            job["next_run"] = datetime.now() + timedelta(minutes=job["interval"])
+        variance = base_interval_minutes * 0.25 # Variasi 25%
+        jitter = random.uniform(-variance, variance)
+        return max(1, base_interval_minutes + jitter) # Minimal 1 menit
 
     # ====================================================
-    # 🕓 SCHEDULER LOOP
+    # 🔁 TASK MANAGEMENT
     # ====================================================
-    def _schedule_loop(self):
+    def register_task(self, username, task_name, func, base_interval=60):
         """
-        Loop utama penjadwalan task
+        Mendaftarkan tugas baru untuk akun tertentu.
         """
-        while not self.stop_flag:
-            now = datetime.now()
-            for username, jobs in list(self.running_tasks.items()):
+        with self.lock:
+            if username not in self.running_tasks:
+                self.running_tasks[username] = []
+
+            # Hitung waktu jalan pertama (sedikit diacak agar tidak semua akun mulai barengan)
+            first_delay = random.uniform(0.5, 5.0) 
+            next_run = datetime.now() + timedelta(minutes=first_delay)
+
+            job = {
+                "id": f"{username}_{task_name}",
+                "username": username,
+                "task_name": task_name,
+                "func": func,
+                "base_interval": base_interval,
+                "next_run": next_run,
+                "status": "pending"
+            }
+            
+            self.running_tasks[username].append(job)
+            logger.info(f"📅 Scheduled '{task_name}' for @{username} (Base: {base_interval}m)")
+
+    def get_next_task(self):
+        """
+        (Untuk Main Loop) Mengambil task yang siap dijalankan sekarang.
+        """
+        now = datetime.now()
+        
+        # Cek apakah bot harus tidur?
+        if not self._is_working_hours():
+            # Jika sedang jam tidur, return None (tapi sesekali bisa bangun untuk cek notif - future improvement)
+            return None
+
+        with self.lock:
+            for username, jobs in self.running_tasks.items():
                 for job in jobs:
-                    if now >= job["next_run"]:
-                        threading.Thread(target=self._execute_task, args=(job,), daemon=True).start()
-            time.sleep(5)
+                    if job["status"] == "pending" and now >= job["next_run"]:
+                        # Tandai sebagai running agar tidak diambil worker lain
+                        job["status"] = "running"
+                        return job
+        return None
+
+    def complete_task(self, job_id):
+        """
+        Menandai task selesai dan menjadwalkan ulang dengan waktu acak.
+        """
+        with self.lock:
+            for username, jobs in self.running_tasks.items():
+                for job in jobs:
+                    if job["id"] == job_id:
+                        # Jadwalkan ulang
+                        interval = self._get_jittered_interval(job["base_interval"])
+                        job["next_run"] = datetime.now() + timedelta(minutes=interval)
+                        job["status"] = "pending"
+                        
+                        logger.info(f"✅ Finished {job['id']}. Next run in {interval:.1f} mins ({job['next_run'].strftime('%H:%M')})")
+                        return
 
     # ====================================================
-    # 🚀 TASK EXAMPLES
+    # 🚀 EXECUTOR (Called by Main.py)
     # ====================================================
-    def _example_task(self, username):
-        """
-        Contoh task sederhana: cek status akun dan print log
-        """
-        self.login_manager.check_status(username)
-        delay = random.randint(3, 10)
-        print(f"💤 [{username}] Tidur {delay} detik untuk anti-ban.")
-        time.sleep(delay)
+    # Di arsitektur baru ini, Scheduler hanya "Pemberi Tugas".
+    # Eksekusi (login, client calls) dilakukan di Main.py / BotController
+    # agar lebih terpusat dan mudah di-stop.
 
-    # ====================================================
-    # ▶️ RUNNER
-    # ====================================================
-    def start(self):
-        """
-        Mulai scheduler utama
-        """
-        print("🚀 Menyiapkan akun...")
-        data = self.login_manager.account_manager._load_accounts()
-        if not data:
-            print("📭 Tidak ada akun tersimpan.")
-            return
-
-        # Register contoh task per akun
-        for username in data.keys():
-            self.register_task(username, self._example_task, interval_minutes=60)
-
-        print("✅ Scheduler dimulai. Tekan CTRL +C untuk berhenti.")
-        try:
-            self._schedule_loop()
-        except KeyboardInterrupt:
-            print("\n🛑 Scheduler dihentikan oleh pengguna.")
-            self.stop_flag = True
-        except Exception as e:
-            print(f"❌ Fatal error pada scheduler: {e}")
-        finally:
-            print("🧹 Membersihkan scheduler...")
-            self.running_tasks.clear()
-            print("✅ Selesai.")
-
+    def get_pending_tasks_count(self):
+        count = 0
+        for jobs in self.running_tasks.values():
+            count += len(jobs)
+        return count
 
 if __name__ == "__main__":
-    scheduler = MultiAccountScheduler()
-    scheduler.start()
+    # Test Unit
+    logging.basicConfig(level=logging.INFO)
+    s = MultiAccountScheduler()
+    print(f"Working hours? {s._is_working_hours()}")
+    print(f"Jittered 60m: {s._get_jittered_interval(60)}")
