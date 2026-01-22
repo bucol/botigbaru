@@ -1,44 +1,39 @@
 #!/usr/bin/env python3
 """
-Account Manager - Production Fixed Version
-
-Tugas:
-- Simpan & kelola akun (username, password terenkripsi, metadata)
-- Integrasi dengan SessionManagerV2
-- Otomatis buat encryption key jika belum ada
-- Aman untuk Termux & Windows
-
-Dependensi:
-  pip install cryptography python-dotenv
+Account Manager - Integrated Version
+Tugas: Menyimpan username/password terenkripsi dan menyediakannya untuk LoginManager.
 """
 
 import os
 import json
 import datetime
+import logging
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
-from core.session_manager_v2 import SessionManagerV2
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 class AccountManager:
-    def __init__(self, accounts_file="sessions/accounts.json", key_file=".secret.key"):
-        self.accounts_file = accounts_file
+    def __init__(self, accounts_file="data/accounts.json", key_file=".secret.key"):
+        # Saya pindahkan ke folder data/ agar lebih rapi sesuai struktur folder kamu
+        self.accounts_file = accounts_file 
         self.key_file = key_file
-        os.makedirs(os.path.dirname(accounts_file), exist_ok=True)
+        
+        # Ensure directories exist
+        os.makedirs(os.path.dirname(self.accounts_file), exist_ok=True)
+        
         self.key = self._load_or_generate_key()
         self.fernet = Fernet(self.key)
-        self.session_manager = SessionManagerV2()
 
+        # Create empty db if not exists
         if not os.path.exists(self.accounts_file):
-            with open(self.accounts_file, "w", encoding="utf-8") as f:
-                json.dump({}, f)
+            self._save_accounts({})
 
     # ====================================================
     # 🔐 ENCRYPTION
     # ====================================================
     def _load_or_generate_key(self) -> bytes:
-        """Load encryption key atau buat baru"""
         if os.path.exists(self.key_file):
             with open(self.key_file, "rb") as f:
                 return f.read()
@@ -59,128 +54,86 @@ class AccountManager:
             return "[decryption_failed]"
 
     # ====================================================
-    # 🧠 ACCOUNT MANAGEMENT
-    # ====================================================
-    def add_account(self, username: str, password: str, note: str = ""):
-        """Tambah akun baru ke database"""
-        data = self._load_accounts()
-        if username in data:
-            print(f"⚠️ Akun '{username}' sudah ada.")
-            return False
-
-        enc_pass = self.encrypt(password)
-        data[username] = {
-            "password": enc_pass,
-            "note": note,
-            "added_at": datetime.datetime.utcnow().isoformat(),
-        }
-
-        self._save_accounts(data)
-        print(f"✅ Akun '{username}' ditambahkan.")
-        return True
-
-    def remove_account(self, username: str):
-        """Hapus akun dari database"""
-        data = self._load_accounts()
-        if username not in data:
-            print(f"⚠️ Akun '{username}' tidak ditemukan.")
-            return False
-        del data[username]
-        self._save_accounts(data)
-        print(f"🗑️ Akun '{username}' dihapus.")
-        return True
-
-    def list_accounts(self):
-        """Tampilkan semua akun"""
-        data = self._load_accounts()
-        if not data:
-            print("📭 Belum ada akun.")
-            return
-        print("📂 Daftar Akun:")
-        for user, info in data.items():
-            note = info.get("note", "")
-            print(f"  • {user} ({note})")
-
-    def get_account_password(self, username: str) -> str:
-        """Ambil password (dekripsi)"""
-        data = self._load_accounts()
-        if username not in data:
-            raise ValueError(f"Akun '{username}' tidak ditemukan.")
-        return self.decrypt(data[username]["password"])
-
-    # ====================================================
-    # ⚙️ FILE MANAGEMENT
+    # 🧠 DATA ACCESS (CRUD)
     # ====================================================
     def _load_accounts(self) -> dict:
         try:
             with open(self.accounts_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except json.JSONDecodeError:
-            print("⚠️ File akun korup, membuat ulang baru.")
+        except (json.JSONDecodeError, FileNotFoundError):
             return {}
 
     def _save_accounts(self, data: dict):
         with open(self.accounts_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
-    # ====================================================
-    # 🌐 SESSION INTEGRATION
-    # ====================================================
-    def login_all(self):
-        """Login semua akun yang tersimpan"""
+    def get_accounts(self) -> list:
+        """
+        Public API: Mengembalikan list semua akun dengan password yang SUDAH DIDEKRIPSI.
+        Digunakan oleh LoginManager untuk proses login.
+        """
         data = self._load_accounts()
-        for username in data.keys():
-            password = self.get_account_password(username)
-            client = self.session_manager.load_session(username)
-            if not client:
-                print(f"🔑 Session baru dibuat untuk {username}.")
-                client = self.session_manager.create_new_session(username, password)
-            if client:
-                self.session_manager.validate_session(username)
+        account_list = []
+        for username, info in data.items():
+            try:
+                decrypted_pass = self.decrypt(info['password'])
+                account_list.append({
+                    'username': username,
+                    'password': decrypted_pass,
+                    'note': info.get('note', ''),
+                    'is_active': info.get('is_active', True)
+                })
+            except Exception:
+                logger.error(f"Failed to decrypt password for {username}")
+        return account_list
 
-    # ====================================================
-    # 📤 EXPORT / IMPORT
-    # ====================================================
-    def export_accounts(self, export_path="accounts_export.json"):
+    def add_account(self, username: str, password: str, note: str = ""):
         data = self._load_accounts()
-        with open(export_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        print(f"📤 Akun diekspor ke {export_path}")
-
-    def import_accounts(self, import_path="accounts_export.json"):
-        if not os.path.exists(import_path):
-            print("⚠️ File import tidak ditemukan.")
-            return
-        with open(import_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        if username in data:
+            print(f"⚠️ Akun '{username}' sudah ada. Update password...")
+        
+        data[username] = {
+            "password": self.encrypt(password),
+            "note": note,
+            "added_at": datetime.datetime.utcnow().isoformat(),
+            "is_active": True
+        }
         self._save_accounts(data)
-        print("📥 Akun berhasil diimpor.")
+        print(f"✅ Akun '{username}' berhasil disimpan (Terenkripsi).")
 
+    def remove_account(self, username: str):
+        data = self._load_accounts()
+        if username in data:
+            del data[username]
+            self._save_accounts(data)
+            print(f"🗑️ Akun '{username}' dihapus.")
+        else:
+            print(f"⚠️ Akun '{username}' tidak ditemukan.")
+
+    def list_accounts_safe(self):
+        """Menampilkan daftar akun tanpa password"""
+        data = self._load_accounts()
+        print("\n📂 Daftar Akun Tersimpan:")
+        for user, info in data.items():
+            status = "🟢" if info.get('is_active', True) else "🔴"
+            print(f" {status} {user} | Note: {info.get('note', '-')}")
+        print("")
 
 if __name__ == "__main__":
-    manager = AccountManager()
-    print("\n=== Account Manager CLI ===")
+    # CLI Sederhana untuk Manajemen Akun
+    mgr = AccountManager()
+    print("=== Account Database Manager ===")
     while True:
-        print("\n1️⃣ Tambah akun\n2️⃣ Lihat akun\n3️⃣ Hapus akun\n4️⃣ Login semua\n5️⃣ Export akun\n6️⃣ Import akun\n0️⃣ Keluar")
-        choice = input("Pilih opsi: ").strip()
-        if choice == "1":
+        c = input("1. Add/Update Account\n2. List Accounts\n3. Delete Account\n4. Exit\nPilih: ")
+        if c == '1':
             u = input("Username: ")
             p = input("Password: ")
-            n = input("Catatan (opsional): ")
-            manager.add_account(u, p, n)
-        elif choice == "2":
-            manager.list_accounts()
-        elif choice == "3":
-            u = input("Username yang dihapus: ")
-            manager.remove_account(u)
-        elif choice == "4":
-            manager.login_all()
-        elif choice == "5":
-            manager.export_accounts()
-        elif choice == "6":
-            manager.import_accounts()
-        elif choice == "0":
-            print("👋 Keluar.")
+            n = input("Note: ")
+            mgr.add_account(u, p, n)
+        elif c == '2':
+            mgr.list_accounts_safe()
+        elif c == '3':
+            u = input("Username: ")
+            mgr.remove_account(u)
+        elif c == '4':
             break
-        else:
-            print("❌ Pilihan tidak valid.")
