@@ -1,30 +1,35 @@
 #!/usr/bin/env python3
 """
-Device Identity Generator - Production Fixed Version
-
-Generate completely random Android-like device identities
-for each Instagram account with valid UUID, IMEI (Luhn checksum),
-MAC address, and other required fields.
-Compatible with Termux & Windows.
+Device Identity Generator - Enhanced Version
+Generate and PERSIST realistic Android device identities.
+Memastikan satu akun selalu menggunakan HP yang sama (Anti-Suspicious Login).
 """
 
 import json
 import random
-import string
 import uuid
 import hashlib
+import os
 from datetime import datetime
 
 class DeviceIdentityGenerator:
     def __init__(self):
-        self.android_versions = [9, 10, 11, 12, 13]
-        self.brands = [
-            ("Samsung", "SM-G991B", "r0q"),
-            ("Xiaomi", "M2012K11AG", "venus"),
-            ("Oppo", "CPH2231", "ossi"),
-            ("Vivo", "V2109", "pd2069f"),
-            ("Realme", "RMX3081", "rmx3081")
+        # Database HP yang lebih lengkap dengan resolusi layar & DPI yang akurat
+        # Format: (Brand, Model, DeviceName, Width, Height, DPI, Android Ver)
+        self.devices_db = [
+            ("Samsung", "SM-G991B", "r0q", 1080, 2400, 480, 31),      # S21
+            ("Samsung", "SM-A525F", "a52q", 1080, 2400, 420, 30),     # A52
+            ("Xiaomi", "M2102J20SG", "vayu", 1080, 2400, 440, 30),    # POCO X3 Pro
+            ("Xiaomi", "2201117TY", "spes", 1080, 2400, 409, 31),     # Redmi Note 11
+            ("Oppo", "CPH2127", "OP4B79", 720, 1600, 269, 29),        # A53
+            ("Vivo", "V2025", "V2025", 1080, 2400, 440, 30),          # V20
+            ("Realme", "RMX3363", "RMX3363", 1080, 2400, 405, 31),    # GT Master
+            ("Infinix", "X680", "Infinix-X680", 720, 1640, 320, 29)   # Hot 9 (Populer di Indo)
         ]
+        
+        self.output_dir = "sessions/devices"
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
 
     def _generate_imei(self):
         """Generate valid IMEI using Luhn checksum"""
@@ -34,50 +39,61 @@ class DeviceIdentityGenerator:
         imei.append((10 - checksum % 10) % 10)
         return ''.join(map(str, imei))
 
-    def _generate_mac(self):
-        """Generate valid MAC address"""
-        return ":".join(f"{random.randint(0, 255):02x}" for _ in range(6))
-
-    def _generate_android_device_id(self):
-        return f"android-{''.join(random.choices('0123456789abcdef', k=16))}"
-
     def _generate_uuid(self):
         return str(uuid.uuid4())
 
-    def _generate_hash(self, value):
-        return hashlib.md5(value.encode()).hexdigest()
+    def get_identity(self, username: str):
+        """
+        LOAD atau CREATE identity.
+        Jika akun sudah punya device ID, pakai itu. Jika belum, buat baru.
+        Ini kunci agar tidak kena 'Suspicious Login'.
+        """
+        file_path = f"{self.output_dir}/{username}_device.json"
+        
+        # 1. Coba load yang sudah ada
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, 'r') as f:
+                    data = json.load(f)
+                    # Validasi simpel
+                    if "brand" in data and "uuid" in data:
+                        return data
+            except Exception:
+                pass # Jika file rusak, buat baru
 
-    def generate_identity(self):
-        brand, model, device = random.choice(self.brands)
-        android_version = random.choice(self.android_versions)
+        # 2. Buat baru jika belum ada
+        print(f"📱 Generating NEW device identity for {username}...")
+        brand, model, device, width, height, dpi, android_ver = random.choice(self.devices_db)
+        
         identity = {
+            "app_version": "269.0.0.18.75", # Versi IG lumayan baru
+            "android_version": android_ver,
+            "android_release": str(random.randint(10, 13)),
             "brand": brand,
             "manufacturer": brand,
             "model": model,
             "device": device,
-            "android_version": android_version,
+            "cpu": device,
+            "display_resolution": f"{width}x{height}",
+            "dpi": f"{dpi}dpi",
             "phone_id": self._generate_uuid(),
             "uuid": self._generate_uuid(),
-            "client_session_id": self._generate_uuid(),
             "advertising_id": self._generate_uuid(),
-            "android_device_id": self._generate_android_device_id(),
-            "mac_address": self._generate_mac(),
+            "android_device_id": f"android-{hashlib.md5(username.encode()).hexdigest()[:16]}", # Consistent hash based on username
             "imei": self._generate_imei(),
-            "creation_time": datetime.utcnow().isoformat(),
+            
+            # --- LOKALISASI INDONESIA (PENTING) ---
+            "locale": "id_ID",
+            "country": "ID",
+            "timezone_offset": 25200, # UTC+7 (WIB)
         }
-        # Add a unique hash ID to prevent duplicates
-        identity["unique_hash"] = self._generate_hash(identity["uuid"] + identity["android_device_id"])
-        return identity
 
-    def save_identity(self, username, output_dir="sessions"):
-        identity = self.generate_identity()
-        path = f"{output_dir}/{username}_identity.json"
-        with open(path, "w", encoding="utf-8") as f:
+        # Simpan
+        with open(file_path, "w", encoding="utf-8") as f:
             json.dump(identity, f, indent=2)
-        return path
-
+            
+        return identity
 
 if __name__ == "__main__":
     gen = DeviceIdentityGenerator()
-    sample = gen.generate_identity()
-    print(json.dumps(sample, indent=2))
+    print(json.dumps(gen.get_identity("test_user"), indent=2))
