@@ -1,10 +1,7 @@
-instagrapi
-rich
-questionary
-telebot
-python-dotenv
-cryptography
-colorama
-requests
-schedule
-matplotlib  # Buat grafik sederhana di analytics
+instagrapi==1.17.0
+schedule==1.2.0
+python-dotenv==1.0.0
+cryptography==41.0.3
+colorama==0.4.6
+requests==2.31.0
+pillow==10.0.0
