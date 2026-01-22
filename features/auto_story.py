@@ -1,6 +1,6 @@
 """
-Auto Story Viewer
-Otomatis view stories untuk meningkatkan engagement
+Auto Story Viewer - Humanized Version
+Fitur: Smart Skipping, Variable Duration, Safe Reactions
 """
 
 import time
@@ -9,313 +9,170 @@ import random
 import logging
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-
 class AutoStory:
-    """Auto view stories dengan smart targeting"""
-    
     def __init__(self, client):
         self.client = client
         self.data_file = Path("data/viewed_stories.json")
         self.viewed_stories = self._load_viewed()
         
-        # Configuration
+        # Config Humanis
         self.config = {
-            'daily_limit': 200,
-            'delay_between_views': (2, 5),
-            'delay_between_users': (10, 30),
-            'skip_ads': True,
-            'view_duration': (1, 3),
-            'react_probability': 0.1,
-            'reply_probability': 0.05
+            'daily_limit': random.randint(150, 300),
+            'view_duration_photo': (1.5, 4.0), # Foto dilihat sekilas
+            'view_duration_video': (5.0, 15.0), # Video dilihat agak lama
+            'skip_probability': 0.3, # 30% peluang skip story teman (tap next)
+            'react_probability': 0.05, # JANGAN sering-sering react! Bahaya.
+            'reply_probability': 0.02  # Reply sangat jarang
         }
         
-        # Reaction emojis
-        self.reactions = ['😍', '🔥', '👏', '❤️', '😮', '💯']
-        
-        # Reply templates
+        self.reactions = ['😍', '🔥', '👏', '❤️', '😂']
+        # Spintax templates untuk reply
         self.reply_templates = [
-            "Keren banget! 🔥",
-            "Wow amazing! 😍",
-            "Mantap! 👏",
-            "Suka banget sama ini!",
-            "Goals! ❤️"
+            "{Keren|Mantap|Gokil} {banget|abiss} {🔥|👏}",
+            "{Wow|Wih} {keren|cakep}! {😍|✨}",
+            "{Suka|Love} {banget|bgt} {❤️|💕}",
+            "{Setuju|Valid} {banget|bgt} {sih|ini} {💯|👍}"
         ]
         
-        # Stats
-        self.stats = {
-            'viewed_today': 0,
-            'reacted_today': 0,
-            'replied_today': 0
-        }
-        
-    def _load_viewed(self) -> dict:
-        """Load viewed stories history"""
-        if self.data_file.exists():
-            try:
-                return json.loads(self.data_file.read_text())
-            except:
-                pass
-        return {'stories': [], 'last_reset': str(datetime.now().date())}
-        
+        self.stats = {'viewed': 0, 'reacted': 0, 'replied': 0}
+
+    def _load_viewed(self):
+        try:
+            if self.data_file.exists():
+                data = json.loads(self.data_file.read_text())
+                # Reset jika hari berganti
+                if data.get('date') != str(datetime.now().date()):
+                    return {'stories': [], 'date': str(datetime.now().date())}
+                return data
+        except Exception:
+            pass
+        return {'stories': [], 'date': str(datetime.now().date())}
+
     def _save_viewed(self):
-        """Save viewed stories"""
-        self.data_file.parent.mkdir(exist_ok=True)
+        self.data_file.parent.mkdir(parents=True, exist_ok=True)
         self.data_file.write_text(json.dumps(self.viewed_stories, indent=2))
-        
-    def _check_daily_reset(self):
-        """Reset daily counter if new day"""
-        today = str(datetime.now().date())
-        if self.viewed_stories.get('last_reset') != today:
-            self.viewed_stories = {'stories': [], 'last_reset': today}
-            self.stats = {'viewed_today': 0, 'reacted_today': 0, 'replied_today': 0}
-            
-    def _is_viewed(self, story_id: str) -> bool:
-        """Check if story already viewed"""
-        return story_id in self.viewed_stories.get('stories', [])
-        
-    def _mark_viewed(self, story_id: str):
-        """Mark story as viewed"""
-        if 'stories' not in self.viewed_stories:
-            self.viewed_stories['stories'] = []
-        self.viewed_stories['stories'].append(story_id)
-        self._save_viewed()
-        
-    def view_user_stories(self, username: str) -> dict:
-        """View all stories dari satu user"""
-        self._check_daily_reset()
-        
-        result = {
-            'success': False,
-            'username': username,
-            'viewed': 0,
-            'reacted': 0,
-            'replied': 0
-        }
+
+    def _spin_text(self, text):
+        import re
+        pattern = r'\{([^{}]+)\}'
+        while True:
+            match = re.search(pattern, text)
+            if not match: break
+            options = match.group(1).split('|')
+            text = text[:match.start()] + random.choice(options) + text[match.end():]
+        return text
+
+    def view_user_stories(self, username):
+        """View stories user tertentu dengan pola manusia (bisa skip)"""
+        result = {'viewed': 0, 'reacted': 0}
         
         try:
-            # Get user info
             user_id = self.client.user_id_from_username(username)
             stories = self.client.user_stories(user_id)
             
             if not stories:
-                logger.info(f"📭 @{username} tidak punya story aktif")
                 return result
-                
-            logger.info(f"📖 Found {len(stories)} stories from @{username}")
-            
+
+            # Manusia biasanya lihat story urut, tapi bisa skip di tengah jalan
             for story in stories:
-                # Check daily limit
-                if self.stats['viewed_today'] >= self.config['daily_limit']:
-                    logger.warning("⚠️ Daily view limit reached")
-                    break
-                    
                 story_id = str(story.pk)
                 
-                # Skip if already viewed
-                if self._is_viewed(story_id):
+                # Cek limit harian
+                if self.stats['viewed'] >= self.config['daily_limit']:
+                    logger.warning("⚠️ Daily story limit reached.")
+                    break
+
+                # Skip jika sudah dilihat
+                if story_id in self.viewed_stories['stories']:
                     continue
-                    
-                # Skip ads
-                if self.config['skip_ads'] and hasattr(story, 'is_paid_partnership'):
-                    if story.is_paid_partnership:
-                        continue
-                        
-                # View story
+
+                # SIMULASI SKIP (Tap Next)
+                # Jika user punya banyak story, kita kadang skip beberapa
+                if random.random() < self.config['skip_probability']:
+                    # Kita tandai 'viewed' tapi durasinya super cepat (0.1s - 0.5s) seolah tap cepat
+                    time.sleep(random.uniform(0.1, 0.5))
+                    self.client.story_seen([story.pk]) 
+                    self.viewed_stories['stories'].append(story_id)
+                    continue
+
+                # View normal
                 try:
                     self.client.story_seen([story.pk])
                     
-                    # Simulate viewing duration
-                    view_time = random.uniform(*self.config['view_duration'])
-                    time.sleep(view_time)
+                    # Durasi nonton tergantung tipe konten
+                    if story.video_duration: # Kalau video
+                        dur = random.uniform(*self.config['view_duration_video'])
+                    else: # Kalau foto
+                        dur = random.uniform(*self.config['view_duration_photo'])
                     
-                    self._mark_viewed(story_id)
+                    time.sleep(dur)
+                    
+                    self.viewed_stories['stories'].append(story_id)
+                    self.stats['viewed'] += 1
                     result['viewed'] += 1
-                    self.stats['viewed_today'] += 1
-                    
-                    # Random reaction
-                    if random.random() < self.config['react_probability']:
-                        reaction = random.choice(self.reactions)
-                        # Note: story reaction API may vary
-                        try:
-                            self.client.story_send_reaction(story.pk, reaction)
-                            result['reacted'] += 1
-                            self.stats['reacted_today'] += 1
-                            logger.info(f"  ❤️ Reacted with {reaction}")
-                        except:
-                            pass
-                            
-                    # Random reply
-                    if random.random() < self.config['reply_probability']:
-                        reply = random.choice(self.reply_templates)
-                        try:
-                            self.client.direct_send(reply, user_ids=[user_id])
-                            result['replied'] += 1
-                            self.stats['replied_today'] += 1
-                            logger.info(f"  💬 Replied: {reply}")
-                        except:
-                            pass
-                            
-                    # Delay between stories
-                    delay = random.uniform(*self.config['delay_between_views'])
-                    time.sleep(delay)
+
+                    # Interaksi (React/Reply) - Hanya jika benar-benar nonton (tidak skip)
+                    self._handle_interaction(story, user_id)
                     
                 except Exception as e:
-                    logger.error(f"  ❌ Error viewing story: {e}")
-                    
-            result['success'] = True
-            logger.info(f"✅ Viewed {result['viewed']} stories from @{username}")
+                    logger.error(f"❌ Failed view story {story_id}: {e}")
+
+            self._save_viewed()
             
         except Exception as e:
-            logger.error(f"❌ Error getting stories from @{username}: {e}")
+            logger.error(f"❌ Error viewing {username}: {e}")
             
         return result
-        
-    def view_followers_stories(self, limit: int = 20) -> dict:
-        """View stories dari followers"""
-        self._check_daily_reset()
-        
-        result = {
-            'success': False,
-            'users_processed': 0,
-            'viewed': 0,
-            'reacted': 0,
-            'replied': 0
-        }
-        
+
+    def _handle_interaction(self, story, user_id):
+        """Logic reaksi yang aman"""
+        # Jangan react ke semua story, pilih satu per user per sesi
+        if random.random() < self.config['react_probability']:
+            try:
+                reaction = random.choice(self.reactions)
+                self.client.story_send_reaction(story.pk, reaction)
+                logger.info(f"❤️ Sent reaction {reaction} to story")
+                self.stats['reacted'] += 1
+                time.sleep(random.uniform(2, 5))
+                return # Sudah react, jangan reply lagi
+            except: pass
+
+        if random.random() < self.config['reply_probability']:
+            try:
+                raw_tpl = random.choice(self.reply_templates)
+                msg = self._spin_text(raw_tpl)
+                self.client.direct_send(msg, user_ids=[user_id])
+                logger.info(f"💬 Replied to story: {msg}")
+                self.stats['replied'] += 1
+                time.sleep(random.uniform(5, 10))
+            except: pass
+
+    def view_following_stories(self, limit=20):
+        """Nonton story dari feed (seperti manusia scroll beranda)"""
+        logger.info("👀 Watching stories from feed...")
         try:
-            # Get current user ID
-            user_id = self.client.user_id
-            
-            # Get followers
-            followers = self.client.user_followers(user_id, amount=limit)
-            
-            logger.info(f"📋 Processing stories from {len(followers)} followers")
-            
-            for follower_id, follower_info in followers.items():
-                # Check daily limit
-                if self.stats['viewed_today'] >= self.config['daily_limit']:
-                    break
-                    
-                username = follower_info.username
-                
-                # View their stories
-                user_result = self.view_user_stories(username)
-                
-                if user_result['viewed'] > 0:
-                    result['users_processed'] += 1
-                    result['viewed'] += user_result['viewed']
-                    result['reacted'] += user_result['reacted']
-                    result['replied'] += user_result['replied']
-                    
-                # Delay between users
-                delay = random.uniform(*self.config['delay_between_users'])
-                time.sleep(delay)
-                
-            result['success'] = True
-            
-        except Exception as e:
-            logger.error(f"❌ Error viewing followers stories: {e}")
-            
-        return result
-        
-    def view_following_stories(self, limit: int = 30) -> dict:
-        """View stories dari akun yang di-follow"""
-        self._check_daily_reset()
-        
-        result = {
-            'success': False,
-            'users_processed': 0,
-            'viewed': 0
-        }
-        
-        try:
-            # Get feed stories (people you follow)
+            # Ambil reel tray (lingkaran story di atas beranda)
             reels_tray = self.client.reels_tray()
+            # Shuffle biar gak selalu urutan awal
+            random.shuffle(reels_tray)
             
-            count = 0
+            processed = 0
             for reel in reels_tray:
-                if count >= limit:
-                    break
-                    
-                if self.stats['viewed_today'] >= self.config['daily_limit']:
-                    break
-                    
+                if processed >= limit: break
+                
                 username = reel.user.username
-                user_result = self.view_user_stories(username)
+                logger.info(f"▶️ Viewing @{username}'s stories")
                 
-                if user_result['viewed'] > 0:
-                    result['users_processed'] += 1
-                    result['viewed'] += user_result['viewed']
-                    count += 1
+                res = self.view_user_stories(username)
+                if res['viewed'] > 0:
+                    processed += 1
+                    # Jeda antar user (seperti pindah profile)
+                    time.sleep(random.uniform(3, 8))
                     
-                # Delay
-                time.sleep(random.uniform(*self.config['delay_between_users']))
-                
-            result['success'] = True
-            
         except Exception as e:
-            logger.error(f"❌ Error viewing following stories: {e}")
+            logger.error(f"❌ Error viewing feed: {e}")
             
-        return result
-        
-    def view_hashtag_stories(self, hashtag: str, limit: int = 10) -> dict:
-        """View stories dari hashtag tertentu"""
-        self._check_daily_reset()
-        
-        result = {
-            'success': False,
-            'viewed': 0
-        }
-        
-        try:
-            hashtag = hashtag.lstrip('#')
-            
-            # Get hashtag stories
-            stories = self.client.hashtag_stories(hashtag)
-            
-            logger.info(f"📋 Found {len(stories)} stories for #{hashtag}")
-            
-            count = 0
-            for story in stories:
-                if count >= limit:
-                    break
-                    
-                if self.stats['viewed_today'] >= self.config['daily_limit']:
-                    break
-                    
-                story_id = str(story.pk)
-                
-                if self._is_viewed(story_id):
-                    continue
-                    
-                try:
-                    self.client.story_seen([story.pk])
-                    self._mark_viewed(story_id)
-                    result['viewed'] += 1
-                    self.stats['viewed_today'] += 1
-                    count += 1
-                    
-                    # Delay
-                    time.sleep(random.uniform(*self.config['delay_between_views']))
-                    
-                except Exception as e:
-                    logger.error(f"  ❌ Error viewing story: {e}")
-                    
-            result['success'] = True
-            
-        except Exception as e:
-            logger.error(f"❌ Error viewing hashtag stories: {e}")
-            
-        return result
-        
-    def get_stats(self) -> dict:
-        """Get viewing statistics"""
-        return {
-            'today': self.stats,
-            'total_viewed': len(self.viewed_stories.get('stories', [])),
-            'remaining_today': self.config['daily_limit'] - self.stats['viewed_today']
-        }
+        return self.stats
