@@ -1,21 +1,12 @@
 #!/usr/bin/env python3
 """
-Login Manager - Production Fixed Version
-
-Tugas:
-- Login dan manajemen akun (multi account)
-- Integrasi dengan SessionManagerV2 dan VerificationHandler
-- Handle expired session, challenge, dan rate limit
-- Kompatibel untuk Termux & Windows
-
-Dependensi:
-  pip install instagrapi python-dotenv
+Login Manager - Enhanced & Integrated Version
+Menerapkan "Device Consistency" dan "Indonesian Locale"
 """
 
 import os
 import time
 import random
-from datetime import datetime
 from dotenv import load_dotenv
 from instagrapi import Client
 from instagrapi.exceptions import (
@@ -23,148 +14,144 @@ from instagrapi.exceptions import (
     ChallengeRequired,
     TwoFactorRequired,
     PleaseWaitFewMinutes,
+    BadPassword
 )
 
 # local imports
 from core.session_manager_v2 import SessionManagerV2
 from core.verification_handler import VerificationHandler
 from core.account_manager import AccountManager
+from core.device_identity_generator import DeviceIdentityGenerator  # INTEGRASI DISINI
 
 load_dotenv()
-
 
 class LoginManager:
     def __init__(self):
         self.session_manager = SessionManagerV2()
         self.verifier = VerificationHandler()
         self.account_manager = AccountManager()
+        self.device_generator = DeviceIdentityGenerator() # Load generator
         self.max_retries = 3
 
-    # ====================================================
-    # 🔑 LOGIN PER AKUN
-    # ====================================================
+    def _inject_device_settings(self, client: Client, username: str):
+        """
+        Menyuntikkan identitas HP palsu tapi konsisten ke Client.
+        Agar Instagram mengira ini HP yang sama terus.
+        """
+        device_data = self.device_generator.get_identity(username)
+        
+        # Override settings instagrapi
+        client.set_device({
+            "app_version": device_data["app_version"],
+            "android_version": device_data["android_version"],
+            "android_release": device_data["android_release"],
+            "dpi": device_data["dpi"],
+            "resolution": device_data["display_resolution"],
+            "manufacturer": device_data["manufacturer"],
+            "device": device_data["device"],
+            "model": device_data["model"],
+            "cpu": device_data["cpu"],
+            "version_code": "314665256" # Contoh build code valid
+        })
+        
+        client.set_user_agent(
+            f"Instagram {device_data['app_version']} Android ({device_data['android_release']}/{device_data['android_version']}; {device_data['dpi']}; {device_data['display_resolution']}; {device_data['manufacturer']}; {device_data['model']}; {device_data['device']}; {device_data['cpu']}; id_ID; 314665256)"
+        )
+        
+        client.set_country(device_data['country'])
+        client.set_locale(device_data['locale'])
+        client.set_timezone_offset(device_data['timezone_offset'])
+        
+        # Inject UUIDs agar konsisten
+        client.phone_id = device_data['phone_id']
+        client.uuid = device_data['uuid']
+        client.advertising_id = device_data['advertising_id']
+        client.android_device_id = device_data['android_device_id']
+        
+        return client
+
     def login(self, username: str, password: str) -> Client | None:
         """
-        Login satu akun dengan full handler
+        Login satu akun dengan device settings yang konsisten
         """
-        client = self.session_manager.load_session(username)
-        if client:
-            print(f"✅ Session ditemukan untuk {username}")
-            try:
-                client.get_timeline_feed()
-                print(f"✅ Session {username} masih aktif.")
-                return client
-            except LoginRequired:
-                print(f"⚠️ Session expired untuk {username}. Relogin...")
-            except Exception as e:
-                print(f"⚠️ Error saat cek session {username}: {e}")
+        # 1. Setup Client dengan Device ID yang benar DULUAN
+        client = Client()
+        client = self._inject_device_settings(client, username)
+        
+        # 2. Coba Load Session (Cookie)
+        try:
+            if self.session_manager.load_session(client, username):
+                print(f"✅ Session loaded untuk {username} (Device: {client.device_settings['model']})")
+                # Validasi session
+                try:
+                    client.get_timeline_feed()
+                    return client
+                except LoginRequired:
+                    print(f"⚠️ Session expired untuk {username}. Mencoba login ulang...")
+        except Exception as e:
+            print(f"ℹ️ Info: Belum ada session valid ({e})")
 
+        # 3. Jika session mati/tidak ada, Login Manual (Username/Pass)
         for attempt in range(self.max_retries):
             try:
-                print(f"🔑 Login attempt {attempt+1}/{self.max_retries} untuk {username}")
-                client = Client()
+                print(f"🔑 Login attempt {attempt+1} untuk {username} via {client.device_settings['model']}...")
+                
+                # Tambah delay acak manusiawi sebelum hit server login
+                time.sleep(random.uniform(2, 5)) 
+                
                 client.login(username, password)
-                print(f"✅ Login sukses untuk {username}")
+                print(f"✅ Login sukses!")
+                
                 self.session_manager.save_session(client, username)
                 return client
 
             except TwoFactorRequired:
-                print(f"🔐 TwoFactorRequired untuk {username}")
+                print(f"🔐 Masukkan Kode 2FA...")
                 client = self.verifier.handle_two_factor(client, username, password)
                 if client:
                     self.session_manager.save_session(client, username)
                     return client
 
             except ChallengeRequired:
-                print(f"⚠️ ChallengeRequired untuk {username}")
+                print(f"⚠️ Challenge Required...")
                 client = self.verifier.handle_challenge(client, username)
                 if client:
                     self.session_manager.save_session(client, username)
                     return client
 
             except PleaseWaitFewMinutes:
-                delay = random.randint(60, 180)
-                print(f"⏳ Rate limited. Menunggu {delay}s sebelum coba lagi...")
-                time.sleep(delay)
+                print("⏳ Terkena limit 'Please Wait'. Tidur 3 menit...")
+                time.sleep(180)
+            
+            except BadPassword:
+                print("❌ Password salah! Berhenti mencoba.")
+                return None
 
             except Exception as e:
-                print(f"❌ Gagal login {username}: {e}")
-                time.sleep(random.randint(5, 15))
+                print(f"❌ Error login: {e}")
+                time.sleep(5)
 
-        print(f"❌ Semua percobaan login gagal untuk {username}")
         return None
 
-    # ====================================================
-    # 🔁 LOGIN SEMUA AKUN
-    # ====================================================
     def login_all_accounts(self):
-        """
-        Loop semua akun dari AccountManager
-        """
+        """Loop semua akun"""
         data = self.account_manager._load_accounts()
         if not data:
             print("📭 Tidak ada akun tersimpan.")
             return
 
-        for username in data:
-            password = self.account_manager.get_account_password(username)
-            print(f"\n👤 Login akun: {username}")
-            client = self.login(username, password)
-            if client:
-                print(f"✅ {username} aktif & tersambung.\n")
-                self.session_manager.validate_session(username)
+        for acc in data:
+            username = acc['username']
+            password = acc['password']
+            if self.login(username, password):
+                print(f"🚀 {username} siap beraksi.\n")
             else:
-                print(f"❌ Gagal login akun {username}.\n")
+                print(f"💀 {username} gagal diaktifkan.\n")
 
-    # ====================================================
-    # 🧹 LOGOUT & RESET SESSION
-    # ====================================================
     def logout_account(self, username: str):
-        path = self.session_manager._get_session_path(username)
-        if os.path.exists(path):
-            os.remove(path)
-            print(f"🧹 Session {username} dihapus.")
-        else:
-            print(f"⚠️ Session {username} tidak ditemukan.")
-
-    def logout_all(self):
-        data = self.account_manager._load_accounts()
-        for username in data:
-            self.logout_account(username)
-        print("✅ Semua session dihapus.")
-
-    # ====================================================
-    # 🧠 UTILITIES
-    # ====================================================
-    def check_status(self, username: str):
-        """
-        Periksa status session akun tertentu
-        """
-        active = self.session_manager.validate_session(username)
-        if active:
-            print(f"✅ {username} masih aktif.")
-        else:
-            print(f"⚠️ {username} butuh login ulang.")
-
+        self.session_manager.delete_session(username)
+        print(f"🧹 Session {username} dihapus.")
 
 if __name__ == "__main__":
     manager = LoginManager()
-    print("\n=== Login Manager CLI ===")
-    while True:
-        print("\n1️⃣ Login semua akun\n2️⃣ Cek status akun\n3️⃣ Hapus session\n4️⃣ Hapus semua session\n0️⃣ Keluar")
-        choice = input("Pilih opsi: ").strip()
-        if choice == "1":
-            manager.login_all_accounts()
-        elif choice == "2":
-            user = input("Username: ").strip()
-            manager.check_status(user)
-        elif choice == "3":
-            user = input("Username: ").strip()
-            manager.logout_account(user)
-        elif choice == "4":
-            manager.logout_all()
-        elif choice == "0":
-            print("👋 Keluar dari Login Manager.")
-            break
-        else:
-            print("❌ Pilihan tidak valid.")
+    manager.login_all_accounts()
