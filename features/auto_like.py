@@ -1,13 +1,16 @@
 """
-Auto Like Module
-Otomatis like postingan berdasarkan target (hashtag/user/explore)
+Auto Like Module - Enhanced "Humanized" Version
+Fitur: Smart Sleep, View Simulation, & Random Skipping
 """
 
 import time
 import random
 import json
-from datetime import datetime
+import logging
 from pathlib import Path
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 class AutoLike:
     def __init__(self, client, analytics=None, scheduler=None):
@@ -17,208 +20,125 @@ class AutoLike:
         self.config = self._load_config()
         self.liked_posts = self._load_liked_posts()
         
+        # Buat folder data jika belum ada
+        Path("data").mkdir(parents=True, exist_ok=True)
+
     def _load_config(self):
-        """Load konfigurasi auto like"""
         return {
-            "daily_limit": 100,
-            "delay_min": 30,
-            "delay_max": 120,
-            "like_probability": 0.7,  # 70% chance to like
+            "daily_limit": random.randint(80, 150), # Limit harian acak setiap bot start
+            "like_probability": 0.85, 
             "skip_if_liked": True,
             "skip_video": False,
-            "min_likes": 10,
-            "max_likes": 10000,
-            "min_followers": 100,
-            "max_followers": 50000
+            "min_likes": 5,
+            "max_likes": 50000,
+            "action_delay_range": (5, 25), # Waktu antar like (cepat)
+            "batch_break_range": (120, 600) # Istirahat panjang setiap beberapa like
         }
-    
+
     def _load_liked_posts(self):
-        """Load daftar post yang sudah di-like"""
-        liked_file = Path("data/liked_posts.json")
-        if liked_file.exists():
-            with open(liked_file, "r") as f:
-                return set(json.load(f))
+        try:
+            path = Path("data/liked_posts.json")
+            if path.exists():
+                with open(path, "r") as f:
+                    return set(json.load(f))
+        except Exception:
+            pass
         return set()
-    
+
     def _save_liked_posts(self):
-        """Simpan daftar post yang sudah di-like"""
-        Path("data").mkdir(exist_ok=True)
         with open("data/liked_posts.json", "w") as f:
             json.dump(list(self.liked_posts), f)
-    
+
+    def _human_sleep(self):
+        """Tidur dengan pola manusia (dominan cepat, kadang lambat)"""
+        # 80% peluang tidur sebentar (scroll feed), 20% tidur lama (baca/nonton)
+        if random.random() < 0.8:
+            sleep_time = random.uniform(*self.config["action_delay_range"])
+        else:
+            sleep_time = random.uniform(30, 90)
+        
+        logger.info(f"⏳ Waiting {sleep_time:.1f}s...")
+        time.sleep(sleep_time)
+
     def _should_like(self, media):
-        """Cek apakah post layak di-like"""
-        try:
-            # Skip jika sudah di-like
-            if self.config["skip_if_liked"] and str(media.pk) in self.liked_posts:
-                return False, "Sudah pernah di-like"
-            
-            # Skip video jika dikonfigurasi
-            if self.config["skip_video"] and media.media_type == 2:
-                return False, "Skip video"
-            
-            # Cek jumlah likes
-            like_count = media.like_count or 0
-            if like_count < self.config["min_likes"]:
-                return False, f"Likes terlalu sedikit ({like_count})"
-            if like_count > self.config["max_likes"]:
-                return False, f"Likes terlalu banyak ({like_count})"
-            
-            # Random probability
-            if random.random() > self.config["like_probability"]:
-                return False, "Skip berdasarkan probability"
-            
-            return True, "OK"
-        except Exception as e:
-            return False, f"Error: {str(e)}"
-    
-    def like_by_hashtag(self, hashtag, amount=10):
-        """Like postingan berdasarkan hashtag"""
-        results = {"success": 0, "failed": 0, "skipped": 0, "errors": []}
+        """Filter cerdas"""
+        media_id = str(media.pk)
         
-        try:
-            # Hapus # jika ada
-            hashtag = hashtag.lstrip("#")
+        if self.config["skip_if_liked"] and media_id in self.liked_posts:
+            return False, "Already liked"
             
-            print(f"🔍 Mencari postingan dengan hashtag #{hashtag}...")
-            medias = self.client.hashtag_medias_recent(hashtag, amount=amount * 2)
+        if self.config["skip_video"] and media.media_type == 2:
+            return False, "Video skipped"
             
-            for media in medias[:amount]:
-                try:
-                    should_like, reason = self._should_like(media)
-                    
-                    if not should_like:
-                        results["skipped"] += 1
-                        print(f"⏭️ Skip: {reason}")
-                        continue
-                    
-                    # Like post
-                    self.client.media_like(media.pk)
-                    self.liked_posts.add(str(media.pk))
-                    results["success"] += 1
-                    
-                    # Track analytics
-                    if self.analytics:
-                        self.analytics.track_action("like", True, {
-                            "source": "hashtag",
-                            "hashtag": hashtag,
-                            "media_id": str(media.pk)
-                        })
-                    
-                    print(f"❤️ Liked: {media.code} (by @{media.user.username})")
-                    
-                    # Delay
-                    delay = random.randint(
-                        self.config["delay_min"], 
-                        self.config["delay_max"]
-                    )
-                    print(f"⏳ Delay {delay} detik...")
-                    time.sleep(delay)
-                    
-                except Exception as e:
-                    results["failed"] += 1
-                    results["errors"].append(str(e))
-                    print(f"❌ Error: {str(e)}")
-                    
-                    if self.analytics:
-                        self.analytics.track_action("like", False, {"error": str(e)})
-            
-            # Save liked posts
-            self._save_liked_posts()
-            
-        except Exception as e:
-            results["errors"].append(f"Hashtag error: {str(e)}")
-            print(f"❌ Error hashtag: {str(e)}")
+        # Analisa jumlah like (hindari akun terlalu sepi atau terlalu viral)
+        if not (self.config["min_likes"] <= media.like_count <= self.config["max_likes"]):
+            return False, f"Like count {media.like_count} out of range"
+
+        # Simulasi "Mood" (Random skip)
+        if random.random() > self.config["like_probability"]:
+            return False, "Skipped by probability (Human mood)"
+
+        return True, "OK"
+
+    def process_media_list(self, medias, source_info):
+        """Helper function untuk memproses list media"""
+        results = {"success": 0, "failed": 0, "skipped": 0}
         
+        for i, media in enumerate(medias):
+            # Simulasi istirahat panjang setiap 5-10 like
+            if i > 0 and i % random.randint(5, 10) == 0:
+                long_break = random.randint(*self.config["batch_break_range"])
+                logger.info(f"☕ Taking a coffee break for {long_break}s...")
+                time.sleep(long_break)
+
+            try:
+                should, reason = self._should_like(media)
+                if not should:
+                    results["skipped"] += 1
+                    logger.info(f"⏭️ Skip: {reason}")
+                    continue
+
+                # SIMULASI: Lihat media dulu sebelum like (Penting untuk anti-detect)
+                # self.client.media_info(media.pk) # Opsional: uncomment jika ingin super aman (tapi boros request)
+                
+                self.client.media_like(media.pk)
+                self.liked_posts.add(str(media.pk))
+                results["success"] += 1
+                
+                logger.info(f"❤️ Liked {media.code} | Src: {source_info}")
+                
+                if self.analytics:
+                    self.analytics.track_action("like", True, {"source": source_info, "media_id": media.pk})
+
+                self._save_liked_posts()
+                self._human_sleep()
+
+            except Exception as e:
+                logger.error(f"❌ Like failed: {e}")
+                results["failed"] += 1
+                time.sleep(10) # Safety sleep error
+
         return results
-    
-    def like_by_user(self, username, amount=10):
-        """Like postingan dari user tertentu"""
-        results = {"success": 0, "failed": 0, "skipped": 0, "errors": []}
-        
+
+    def like_by_hashtag(self, hashtag, limit=10):
+        hashtag = hashtag.lstrip("#")
+        logger.info(f"🔍 Exploring hashtag #{hashtag}...")
         try:
-            username = username.lstrip("@")
-            
-            print(f"🔍 Mencari postingan dari @{username}...")
+            # Ambil lebih banyak media untuk filter
+            medias = self.client.hashtag_medias_recent(hashtag, amount=limit * 2)
+            # Acak urutan agar tidak selalu like postingan teratas (Top Recent)
+            random.shuffle(medias)
+            return self.process_media_list(medias[:limit], f"#{hashtag}")
+        except Exception as e:
+            logger.error(f"❌ Error fetching hashtag: {e}")
+            return {}
+
+    def like_by_user(self, username, limit=5):
+        try:
             user_id = self.client.user_id_from_username(username)
-            medias = self.client.user_medias(user_id, amount=amount)
-            
-            for media in medias:
-                try:
-                    should_like, reason = self._should_like(media)
-                    
-                    if not should_like:
-                        results["skipped"] += 1
-                        continue
-                    
-                    self.client.media_like(media.pk)
-                    self.liked_posts.add(str(media.pk))
-                    results["success"] += 1
-                    
-                    if self.analytics:
-                        self.analytics.track_action("like", True, {
-                            "source": "user",
-                            "target_user": username
-                        })
-                    
-                    print(f"❤️ Liked: {media.code}")
-                    
-                    delay = random.randint(self.config["delay_min"], self.config["delay_max"])
-                    time.sleep(delay)
-                    
-                except Exception as e:
-                    results["failed"] += 1
-                    results["errors"].append(str(e))
-            
-            self._save_liked_posts()
-            
+            logger.info(f"🔍 Stalking @{username}...")
+            medias = self.client.user_medias(user_id, amount=limit)
+            return self.process_media_list(medias, f"user_@{username}")
         except Exception as e:
-            results["errors"].append(str(e))
-        
-        return results
-    
-    def like_explore(self, amount=10):
-        """Like postingan dari explore page"""
-        results = {"success": 0, "failed": 0, "skipped": 0, "errors": []}
-        
-        try:
-            print("🔍 Mengambil postingan dari Explore...")
-            medias = self.client.explore_medias(amount=amount * 2)
-            
-            for media in medias[:amount]:
-                try:
-                    should_like, reason = self._should_like(media)
-                    
-                    if not should_like:
-                        results["skipped"] += 1
-                        continue
-                    
-                    self.client.media_like(media.pk)
-                    self.liked_posts.add(str(media.pk))
-                    results["success"] += 1
-                    
-                    if self.analytics:
-                        self.analytics.track_action("like", True, {"source": "explore"})
-                    
-                    print(f"❤️ Liked from explore: {media.code}")
-                    
-                    delay = random.randint(self.config["delay_min"], self.config["delay_max"])
-                    time.sleep(delay)
-                    
-                except Exception as e:
-                    results["failed"] += 1
-                    results["errors"].append(str(e))
-            
-            self._save_liked_posts()
-            
-        except Exception as e:
-            results["errors"].append(str(e))
-        
-        return results
-    
-    def get_stats(self):
-        """Dapatkan statistik auto like"""
-        return {
-            "total_liked": len(self.liked_posts),
-            "config": self.config
-        }
+            logger.error(f"❌ Error fetching user media: {e}")
+            return {}
